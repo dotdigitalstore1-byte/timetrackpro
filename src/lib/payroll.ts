@@ -82,6 +82,35 @@ export function dateKey(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
+export const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+export function isValidHHMM(v: unknown): v is string {
+  return typeof v === "string" && HHMM_RE.test(v);
+}
+
+/** Length of a shift in hours (falls back to 8 for an invalid / overnight range). */
+export function shiftHours(start: string, end: string): number {
+  const m = parseHHMM(end) - parseHHMM(start);
+  return m > 0 ? m / 60 : 8;
+}
+
+/** Minutes between the work date's local midnight and `date` (handles punches after midnight). */
+export function minutesFromWorkDate(date: Date, workDate: Date, tz: string): number {
+  const p = localParts(date, tz);
+  const days = Math.round((Date.UTC(p.year, p.month - 1, p.day) - workDate.getTime()) / 86400000);
+  return days * 1440 + p.minutes;
+}
+
+/** Minutes the employee left BEFORE shift end (0 if they stayed until / past it). */
+export function earlyLeaveMinutesOf(punchOut: Date, workDate: Date, shiftEnd: string, tz: string): number {
+  return Math.max(0, parseHHMM(shiftEnd) - minutesFromWorkDate(punchOut, workDate, tz));
+}
+
+/** Raw minutes worked AFTER shift end (0 if they left on time / early). */
+export function overtimeMinutesOf(punchOut: Date, workDate: Date, shiftEnd: string, tz: string): number {
+  return Math.max(0, minutesFromWorkDate(punchOut, workDate, tz) - parseHHMM(shiftEnd));
+}
+
 // ------------------------------------------------------------------ status
 
 export function computeStatus(punchIn: Date, p: PolicyInput): AttendanceStatus {
@@ -104,21 +133,65 @@ export function parseWeeklyOff(value: string | null | undefined): Set<number> {
   return set;
 }
 
+/** An inclusive date range; both ends are UTC midnights of company-local calendar dates. */
+export interface Period {
+  start: Date;
+  end: Date;
+}
+
+export function clampCycleStartDay(n: unknown): number {
+  const v = Math.round(Number(n));
+  return Number.isFinite(v) ? Math.min(28, Math.max(1, v)) : 1;
+}
+
+/**
+ * The pay period for a cycle named by (year, month). A cycle is named after the month it ENDS in.
+ *  - startDay 1  : the calendar month (1st → last day)
+ *  - startDay 26 : 26th of the previous month → 25th of this month
+ */
+export function cyclePeriod(year: number, month: number, startDay: number): Period {
+  const sd = clampCycleStartDay(startDay);
+  if (sd <= 1) return { start: new Date(Date.UTC(year, month - 1, 1)), end: new Date(Date.UTC(year, month, 0)) };
+  return { start: new Date(Date.UTC(year, month - 2, sd)), end: new Date(Date.UTC(year, month - 1, sd - 1)) };
+}
+
+/** Which cycle contains `todayLocal` (UTC midnight of the local date)? */
+export function currentCycleKey(todayLocal: Date, startDay: number): { year: number; month: number } {
+  const sd = clampCycleStartDay(startDay);
+  let year = todayLocal.getUTCFullYear();
+  let month = todayLocal.getUTCMonth() + 1;
+  if (sd > 1 && todayLocal.getUTCDate() >= sd) {
+    month += 1;
+    if (month > 12) {
+      month = 1;
+      year += 1;
+    }
+  }
+  return { year, month };
+}
+
+export function addDays(d: Date, n: number): Date {
+  return new Date(d.getTime() + n * 86400000);
+}
+
+export function periodWorkdays(period: Period, weeklyOff: Set<number>, holidays: Set<string> = new Set()): Date[] {
+  const out: Date[] = [];
+  for (let t = period.start.getTime(); t <= period.end.getTime(); t += 86400000) {
+    const d = new Date(t);
+    if (weeklyOff.has(d.getUTCDay())) continue;
+    if (holidays.has(dateKey(d))) continue;
+    out.push(d);
+  }
+  return out;
+}
+
 export function monthWorkdays(
   year: number,
   month: number,
   weeklyOff: Set<number>,
   holidays: Set<string> = new Set()
 ): Date[] {
-  const out: Date[] = [];
-  const total = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  for (let i = 1; i <= total; i++) {
-    const d = new Date(Date.UTC(year, month - 1, i));
-    if (weeklyOff.has(d.getUTCDay())) continue;
-    if (holidays.has(dateKey(d))) continue;
-    out.push(d);
-  }
-  return out;
+  return periodWorkdays(cyclePeriod(year, month, 1), weeklyOff, holidays);
 }
 
 export function countWorkdaysBetween(
@@ -140,6 +213,15 @@ export function countWorkdaysBetween(
 export interface DayRecord {
   status: string; // present | late | half_day | absent | on_leave
   hasPunchIn: boolean;
+  earlyLeaveMinutes?: number; // minutes left before shift end (recorded at punch-out)
+  overtimeMinutes?: number; // raw minutes worked after shift end (recorded at punch-out)
+}
+
+/** Company rules that change how recorded days are counted. All optional: omitted = legacy behaviour. */
+export interface SummaryRules {
+  earlyLeaveGraceMinutes: number; // leaving up to this early is fine
+  earlyLeaveHalfDayMinutes: number; // leaving MORE than this early = half day (0 = off)
+  overtime?: { minMinutes: number; maxMinutesPerDay: number } | null;
 }
 
 export interface MonthSummary {
@@ -149,6 +231,8 @@ export interface MonthSummary {
   leaveDays: number; // approved leave on workdays
   absentDays: number; // workdays with no punch and no approved leave
   unapprovedOccurrences: Date[]; // first day of each consecutive absent block
+  earlyLeaveDays?: number; // full days where the employee left early beyond the grace
+  overtimeMinutes?: number; // payable overtime minutes (after min threshold and daily cap)
 }
 
 /**
@@ -159,6 +243,8 @@ export interface MonthSummary {
 export function summarizeMonth(args: {
   year: number;
   month: number;
+  period?: Period; // custom pay period (salary cycle); defaults to the calendar month
+  rules?: SummaryRules;
   weeklyOff: Set<number>;
   holidays?: Set<string>;
   records: Map<string, DayRecord>; // key = YYYY-MM-DD
@@ -173,18 +259,29 @@ export function summarizeMonth(args: {
     leaveDays: 0,
     absentDays: 0,
     unapprovedOccurrences: [],
+    earlyLeaveDays: 0,
+    overtimeMinutes: 0,
   };
   let inBlock = false;
+  const rules = args.rules;
+  const period = args.period ?? cyclePeriod(args.year, args.month, 1);
 
-  for (const day of monthWorkdays(args.year, args.month, args.weeklyOff, args.holidays)) {
+  for (const day of periodWorkdays(period, args.weeklyOff, args.holidays)) {
     if (args.joinDate && day.getTime() < args.joinDate.getTime()) continue;
     const rec = args.records.get(dateKey(day));
     if (rec?.hasPunchIn) {
       inBlock = false;
-      if (rec.status === "half_day") out.halfDays += 1;
+      const early = rec.earlyLeaveMinutes ?? 0;
+      const leftTooEarly = !!rules && rules.earlyLeaveHalfDayMinutes > 0 && early > rules.earlyLeaveHalfDayMinutes;
+      if (rec.status === "half_day" || leftTooEarly) out.halfDays += 1;
       else {
         out.presentDays += 1;
         if (rec.status === "late") out.lateDays += 1;
+        if (rules && early > rules.earlyLeaveGraceMinutes) out.earlyLeaveDays = (out.earlyLeaveDays ?? 0) + 1;
+      }
+      const ot = rec.overtimeMinutes ?? 0;
+      if (rules?.overtime && ot > 0 && ot >= rules.overtime.minMinutes) {
+        out.overtimeMinutes = (out.overtimeMinutes ?? 0) + Math.min(ot, rules.overtime.maxMinutesPerDay);
       }
       continue;
     }
@@ -223,15 +320,25 @@ export interface SalaryInput {
   holdDaysPerOccurrence: number;
   releasedHoldCount: number; // occurrences whose hold has been released
   otherDeductions: { label: string; amount: number }[];
+  // --- optional company rules (omitted = no effect) ---
+  earlyLeaveRule?: DeductionRule; // per early-leave day
+  lateMarks?: { limit: number; penaltyDays: number }; // every `limit` late days costs `penaltyDays` of salary
+  overtime?: { rate: number }; // pay multiplier, e.g. 1.5
+  shiftHours?: number; // employee's shift length, for the hourly rate
+  additions?: { label: string; amount: number }[]; // bonuses / allowances for this cycle
 }
 
 export interface SalaryResult {
   dailyRate: number;
   attendanceSalary: number; // basic minus unpaid (unapproved absent) days
   lateDeduction: number;
+  lateMarksDeduction: number; // extra penalty from the "every N late marks" rule
+  earlyLeaveDeduction: number;
   halfDayDeduction: number;
   leaveDeduction: number;
   otherTotal: number;
+  overtimePay: number;
+  additionsTotal: number;
   totalDeductions: number; // permanent deductions only (holds are separate)
   holdDays: number; // ACTIVE hold days
   holdAmount: number; // ACTIVE hold amount (temporary, releasable)
@@ -251,25 +358,38 @@ export function computeSalary(i: SalaryInput): SalaryResult {
 
   const attendanceSalary = Math.max(0, i.basicSalary - s.absentDays * dailyRate);
   const lateDeduction = s.lateDays * perUnit(i.lateRule, dailyRate);
+  const lateMarksDeduction =
+    i.lateMarks && i.lateMarks.limit > 0
+      ? Math.floor(s.lateDays / i.lateMarks.limit) * i.lateMarks.penaltyDays * dailyRate
+      : 0;
+  const earlyLeaveDeduction = i.earlyLeaveRule ? (s.earlyLeaveDays ?? 0) * perUnit(i.earlyLeaveRule, dailyRate) : 0;
+  const hourlyRate = dailyRate / (i.shiftHours && i.shiftHours > 0 ? i.shiftHours : 8);
+  const overtimePay = i.overtime ? ((s.overtimeMinutes ?? 0) / 60) * hourlyRate * i.overtime.rate : 0;
+  const additionsTotal = (i.additions ?? []).reduce((t, a) => t + Number(a.amount || 0), 0);
   const halfDayDeduction = s.halfDays * perUnit(i.halfDayRule, dailyRate);
   const leaveDeduction = s.leaveDays * perUnit(i.leaveRule, dailyRate);
   const otherTotal = i.otherDeductions.reduce((t, d) => t + Number(d.amount || 0), 0);
-  const totalDeductions = lateDeduction + halfDayDeduction + leaveDeduction + otherTotal;
+  const totalDeductions =
+    lateDeduction + lateMarksDeduction + earlyLeaveDeduction + halfDayDeduction + leaveDeduction + otherTotal;
 
   const activeOccurrences = Math.max(0, s.unapprovedOccurrences.length - i.releasedHoldCount);
   const holdDays = activeOccurrences * i.holdDaysPerOccurrence;
   const holdAmount = holdDays * dailyRate;
 
-  const netBeforeHold = Math.max(0, attendanceSalary - totalDeductions);
+  const netBeforeHold = Math.max(0, attendanceSalary + overtimePay + additionsTotal - totalDeductions);
   const netPayable = Math.max(0, netBeforeHold - holdAmount);
 
   return {
     dailyRate: r2(dailyRate),
     attendanceSalary: r2(attendanceSalary),
     lateDeduction: r2(lateDeduction),
+    lateMarksDeduction: r2(lateMarksDeduction),
+    earlyLeaveDeduction: r2(earlyLeaveDeduction),
     halfDayDeduction: r2(halfDayDeduction),
     leaveDeduction: r2(leaveDeduction),
     otherTotal: r2(otherTotal),
+    overtimePay: r2(overtimePay),
+    additionsTotal: r2(additionsTotal),
     totalDeductions: r2(totalDeductions),
     holdDays,
     holdAmount: r2(holdAmount),

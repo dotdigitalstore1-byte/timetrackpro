@@ -1,44 +1,19 @@
-# ===== DEPENDENCIES =====
-node_modules/
-.pnp
-.pnp.js
+# dependencies
+/node_modules
 
-# ===== NEXT.JS BUILD =====
-.next/
-out/
-build/
-dist/
+# next.js
+/.next/
+/out/
 next-env.d.ts
 
-# ===== ENVIRONMENT SECRETS (NEVER COMMIT) =====
+# build / cache artefacts
+*.tsbuildinfo
+
+# secrets - never commit real credentials
 .env
 .env.local
-.env.development.local
-.env.test.local
-.env.production.local
-.env*.local
+.env.*.local
 
-# ===== DRIZZLE =====
-drizzle/meta/
-
-# ===== LOGS =====
-logs/
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# ===== OS / EDITOR =====
+# misc
 .DS_Store
-Thumbs.db
-Desktop.ini
-.vscode/*
-!.vscode/extensions.json
-.idea/
-*.swp
-
-# ===== MISC =====
-*.tsbuildinfo
-.vercel
-.netlify
-coverage/
+npm-debug.log*

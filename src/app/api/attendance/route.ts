@@ -4,8 +4,8 @@ import { db } from "@/db";
 import { attendance, employeeLocations, employees, geofences, users } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
 import { toClientRecord, validPhoto } from "@/lib/attendance-shape";
-import { policyFrom } from "@/lib/company";
-import { computeStatus, dateKey, localWorkDate } from "@/lib/payroll";
+import { policyFor, shiftOf } from "@/lib/company";
+import { computeStatus, dateKey, earlyLeaveMinutesOf, localWorkDate, overtimeMinutesOf } from "@/lib/payroll";
 import { haversineMeters } from "@/lib/utils";
 
 function parseMonth(value: string | null, tz: string): { year: number; month: number } {
@@ -138,7 +138,7 @@ export async function POST(req: Request) {
 
   if (type === "in") {
     if (existing?.punchInTime) return NextResponse.json({ error: "You have already punched in today." }, { status: 400 });
-    const status = computeStatus(now, policyFrom(ctx.settings));
+    const status = computeStatus(now, policyFor(ctx.settings, ctx.employee));
 
     const values = {
       punchInTime: now,
@@ -168,9 +168,19 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Please wait a minute after punching in before punching out." }, { status: 400 });
   }
 
+  // Early leave / overtime are measured against THIS employee's shift end and stored with the punch.
+  const shift = shiftOf(ctx.settings, ctx.employee);
   const [updated] = await db
     .update(attendance)
-    .set({ punchOutTime: now, punchOutPhoto: photo, punchOutLat: String(lat), punchOutLng: String(lng), updatedAt: now })
+    .set({
+      punchOutTime: now,
+      punchOutPhoto: photo,
+      punchOutLat: String(lat),
+      punchOutLng: String(lng),
+      earlyLeaveMinutes: earlyLeaveMinutesOf(now, existing.workDate, shift.end, tz),
+      overtimeMinutes: overtimeMinutesOf(now, existing.workDate, shift.end, tz),
+      updatedAt: now,
+    })
     .where(eq(attendance.id, existing.id))
     .returning();
   return NextResponse.json({ ok: true, record: toClientRecord(updated) });

@@ -28,6 +28,8 @@ interface EmployeeRow {
   departments: OrgRef[];
   locations: OrgRef[];
   designation: string | null;
+  shiftStart: string | null;
+  shiftEnd: string | null;
   basicSalary: string | null;
   hireDate: string;
   managerId: string | null;
@@ -41,6 +43,8 @@ const emptyForm = {
   role: "employee",
   employeeCode: "",
   designation: "",
+  shiftStart: "09:00",
+  shiftEnd: "18:00",
   basicSalary: "",
   phone: "",
   managerId: "",
@@ -128,6 +132,8 @@ export default function EmployeesPage() {
     const activeLocations = locations.filter((l) => l.isActive);
     setForm({
       ...emptyForm,
+      shiftStart: me?.settings?.shiftStart ?? emptyForm.shiftStart,
+      shiftEnd: me?.settings?.shiftEnd ?? emptyForm.shiftEnd,
       departmentIds: activeDepartments.length === 1 ? [activeDepartments[0].id] : [],
       locationIds: activeLocations.length === 1 ? [activeLocations[0].id] : [],
     });
@@ -144,6 +150,8 @@ export default function EmployeesPage() {
       role: e.role,
       employeeCode: e.employeeCode ?? "",
       designation: e.designation ?? "",
+      shiftStart: e.shiftStart ?? me?.settings?.shiftStart ?? emptyForm.shiftStart,
+      shiftEnd: e.shiftEnd ?? me?.settings?.shiftEnd ?? emptyForm.shiftEnd,
       basicSalary: e.basicSalary ?? "",
       phone: e.phone ?? "",
       managerId: e.managerId ?? "",
@@ -164,6 +172,14 @@ export default function EmployeesPage() {
       setError("Select at least one work location.");
       return;
     }
+    if (!form.shiftStart || !form.shiftEnd) {
+      setError("Enter the punch-in and punch-out time.");
+      return;
+    }
+    if (form.shiftEnd <= form.shiftStart) {
+      setError("Punch-out time must be later than punch-in time.");
+      return;
+    }
     setSaving(true);
     try {
       if (editing) {
@@ -175,6 +191,8 @@ export default function EmployeesPage() {
             role: form.role,
             employeeCode: form.employeeCode,
             designation: form.designation,
+            shiftStart: form.shiftStart,
+            shiftEnd: form.shiftEnd,
             basicSalary: form.basicSalary,
             managerId: form.managerId || null,
             departmentIds: form.departmentIds,
@@ -259,7 +277,7 @@ export default function EmployeesPage() {
         <>
           {/* Desktop table */}
           <Card className="hidden overflow-x-auto p-0 md:block">
-            <table className="w-full min-w-[900px] text-left text-sm">
+            <table className="w-full min-w-[980px] text-left text-sm">
               <thead className="border-b border-slate-100 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                 <tr>
                   <th className="px-4 py-3 font-semibold">Employee</th>
@@ -267,6 +285,7 @@ export default function EmployeesPage() {
                   <th className="px-4 py-3 font-semibold">Departments</th>
                   <th className="px-4 py-3 font-semibold">Locations</th>
                   <th className="px-4 py-3 font-semibold">Designation</th>
+                  <th className="px-4 py-3 font-semibold">Shift</th>
                   <th className="px-4 py-3 font-semibold">Basic Salary</th>
                   <th className="px-4 py-3 font-semibold">Manager</th>
                   <th className="px-4 py-3 font-semibold">Status</th>
@@ -286,6 +305,7 @@ export default function EmployeesPage() {
                     <td className="px-4 py-3"><OrgChips items={e.departments} legacy={e.department} /></td>
                     <td className="px-4 py-3"><OrgChips items={e.locations} /></td>
                     <td className="px-4 py-3 text-slate-600">{e.designation || "—"}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-slate-600">{e.shiftStart && e.shiftEnd ? `${e.shiftStart} – ${e.shiftEnd}` : "—"}</td>
                     <td className="px-4 py-3 font-semibold text-slate-700">
                       {e.basicSalary == null ? "—" : `${currency}${formatNumber(e.basicSalary)}`}
                     </td>
@@ -330,6 +350,10 @@ export default function EmployeesPage() {
                   <div>
                     <p className="mb-1 text-slate-400">Departments</p>
                     <OrgChips items={e.departments} legacy={e.department} />
+                  </div>
+                  <div>
+                    <p className="mb-1 text-slate-400">Shift (punch-in – punch-out)</p>
+                    <p className="font-semibold text-slate-600">{e.shiftStart && e.shiftEnd ? `${e.shiftStart} – ${e.shiftEnd}` : "—"}</p>
                   </div>
                   <div>
                     <p className="mb-1 text-slate-400">Work locations</p>
@@ -398,6 +422,15 @@ export default function EmployeesPage() {
             <Input label="Employee code" value={form.employeeCode} onChange={(v) => setForm({ ...form, employeeCode: v })} />
           </div>
           <Input label="Designation" value={form.designation} onChange={(v) => setForm({ ...form, designation: v })} />
+          <div>
+            <div className="grid grid-cols-2 gap-3">
+              <Input label="Punch-in time" type="time" value={form.shiftStart} onChange={(v) => setForm({ ...form, shiftStart: v })} />
+              <Input label="Punch-out time" type="time" value={form.shiftEnd} onChange={(v) => setForm({ ...form, shiftEnd: v })} />
+            </div>
+            <p className="mt-1 text-[11px] text-slate-400">
+              This employee&apos;s shift. Late arrival, the cool-off time and early leave are all measured against it. You can change it any time.
+            </p>
+          </div>
           <ChipSelect
             label="Departments"
             required

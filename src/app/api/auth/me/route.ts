@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuth } from "@/lib/auth";
+import { shiftOf } from "@/lib/company";
 import { loadEmployeeOrg } from "@/lib/org";
 
 export async function GET() {
@@ -52,6 +53,8 @@ export async function GET() {
           departments: org?.departments ?? [],
           locations: org?.locations ?? [],
           designation: employee.designation,
+          shiftStart: settings ? shiftOf(settings, employee).start : employee.shiftStart,
+          shiftEnd: settings ? shiftOf(settings, employee).end : employee.shiftEnd,
           basicSalary: employee.basicSalary,
           managerId: employee.managerId,
         }

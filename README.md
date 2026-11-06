@@ -10,6 +10,12 @@ a mobile app (Android/desktop install) and a responsive web app.
 * **Leave management** with leave balance, advance-request rules and 1- or 2-level approvals.
 * **Payroll** with attendance-based salary, configurable late/half-day/leave deductions, releasable salary
   holds, month finalization and paid history.
+* **Employee shifts** – every employee has their own punch-in and punch-out time (set when creating the employee,
+  editable later). Lateness, cool-off and early leave are measured against it.
+* **Rules** (company admin) – cool-off (grace) time, half-day cut-off, late marks, early leave, overtime, deductions
+  and the salary cycle, each with a live example.
+* **Salary cycle** – calendar month or a custom cycle (e.g. 26th → 25th) with a pay date; bonuses/allowances and
+  overtime appear on the payslip.
 * **Departments** – a company admin can add unlimited departments (rename, deactivate, delete).
 * **Work locations** – a company admin can add unlimited locations (name, address, GPS point + punch radius).
 * **Employees** with search, manager assignment, **one or more departments and work locations each**,
@@ -46,6 +52,22 @@ Deploy to Vercel: add `DATABASE_URL`, `SUPER_ADMIN_*` as environment variables. 
 > **Stack note:** this codebase uses its own session auth and server-side tenant scoping on Postgres.
 > It does **not** use Supabase Auth, Supabase RLS or Supabase Storage. A Supabase *database* can host it
 > via `DATABASE_URL`, but isolation is enforced in the API layer (every query is filtered by `company_id`).
+
+## Rules, shifts and salary cycle
+
+* **Cool-off (grace) time:** if an employee's shift starts at 09:00 and the cool-off is 5 minutes, punching in at
+  09:04 (or up to 09:05) still counts as a full day. 09:06–(half-day cut-off) is *late*; after the cut-off it is a
+  *half day*. Each employee's own shift start is used.
+* **Late marks:** every N late days in a cycle can cost extra days of salary (0 = off).
+* **Early leave:** leaving up to the early-leave cool-off before shift end is fine; earlier is early leave (optional
+  deduction); earlier than the half-day limit counts as a half day (0 = off). Default deduction is 0.
+* **Overtime (off by default):** time past shift end beyond a minimum, capped per day, paid at a multiplier of the
+  hourly rate (daily rate ÷ shift hours).
+* **Salary cycle:** *Rules → Salary cycle*. A cycle is named after the month it ends in (start day 26 → "Nov" is
+  26 Oct – 25 Nov). A cycle can only be finalized after its last day. Finalized salaries keep their original dates.
+  Changing the start day only affects cycles that are not finalized yet - change it right after finalizing one.
+* Weekly **bi-weekly / weekly** pay cycles are not supported yet (payroll is one record per employee per month cycle).
+* Shift times are same-day (punch-out must be later than punch-in); overnight shifts are not supported yet.
 
 ## Departments & work locations
 

@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { attendance, attendanceAudit, auditLogs } from "@/db/schema";
+import { attendance, attendanceAudit, auditLogs, employees } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
 import { toClientRecord } from "@/lib/attendance-shape";
-import { policyFrom } from "@/lib/company";
-import { computeStatus } from "@/lib/payroll";
+import { policyFor, shiftOf } from "@/lib/company";
+import { computeStatus, earlyLeaveMinutesOf, overtimeMinutesOf } from "@/lib/payroll";
 
 const STATUSES = ["present", "late", "half_day", "absent", "on_leave"];
 
@@ -75,9 +75,20 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     set.punchOutTime = punchOut;
   }
 
+  // The employee's own shift drives status, early leave and overtime.
+  const emp = (await db.select().from(employees).where(eq(employees.id, rec.employeeId)).limit(1))[0];
+  const shift = ctx.settings ? shiftOf(ctx.settings, emp) : null;
+  const tz = ctx.settings?.timezone || "UTC";
+  if (shift && (set.punchOutTime || set.punchInTime) && finalOut) {
+    const early = earlyLeaveMinutesOf(finalOut, rec.workDate, shift.end, tz);
+    const overtime = overtimeMinutesOf(finalOut, rec.workDate, shift.end, tz);
+    if (early !== rec.earlyLeaveMinutes) set.earlyLeaveMinutes = early;
+    if (overtime !== rec.overtimeMinutes) set.overtimeMinutes = overtime;
+  }
+
   // Status: explicit choice wins; otherwise re-derive from the new punch-in using the company policy.
   let newStatus = status;
-  if (!newStatus && set.punchInTime && ctx.settings) newStatus = computeStatus(set.punchInTime as Date, policyFrom(ctx.settings));
+  if (!newStatus && set.punchInTime && ctx.settings) newStatus = computeStatus(set.punchInTime as Date, policyFor(ctx.settings, emp));
   if (newStatus && newStatus !== rec.status) {
     changes.push({ field: "status", oldValue: rec.status, newValue: newStatus });
     set.status = newStatus;

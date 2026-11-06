@@ -18,11 +18,26 @@ interface AttendanceRow {
   status: string;
   isManual: boolean;
   note: string | null;
+  earlyLeaveMinutes?: number;
+  overtimeMinutes?: number;
 }
 
 interface EmployeeOption {
   id: string;
   fullName: string;
+}
+
+/** Small notes under a punch-out: "left 20 min early" / "+1h 10m overtime". */
+function TimeNotes({ r }: { r: AttendanceRow }) {
+  const early = r.earlyLeaveMinutes ?? 0;
+  const ot = r.overtimeMinutes ?? 0;
+  if (!r.punchOutTime || (early <= 0 && ot <= 0)) return null;
+  const fmt = (m: number) => (m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`);
+  return (
+    <span className={`block text-[10px] font-bold ${early > 0 ? "text-amber-600" : "text-emerald-600"}`}>
+      {early > 0 ? `${fmt(early)} early` : `+${fmt(ot)} overtime`}
+    </span>
+  );
 }
 
 function toLocalInput(iso: string | null): string {
@@ -178,7 +193,7 @@ export default function AttendancePage() {
                     </td>
                     {canViewAll && <td className="px-4 py-3 text-slate-600">{r.employeeName}</td>}
                     <td className="px-4 py-3 text-slate-600">{formatTime(r.punchInTime)}</td>
-                    <td className="px-4 py-3 text-slate-600">{formatTime(r.punchOutTime)}</td>
+                    <td className="px-4 py-3 text-slate-600">{formatTime(r.punchOutTime)}<TimeNotes r={r} /></td>
                     <td className="px-4 py-3 text-slate-600">{workingHours(r.punchInTime, r.punchOutTime)}</td>
                     <td className="px-4 py-3"><Badge tone={statusTone(r.status)}>{r.status.replace("_", " ")}</Badge></td>
                     <td className="px-4 py-3"><Photos record={r} /></td>
@@ -215,6 +230,7 @@ export default function AttendancePage() {
                   <div className="rounded-xl bg-slate-50 p-2">
                     <p className="text-[10px] font-bold uppercase text-slate-400">Out</p>
                     <p className="text-sm font-bold text-slate-700">{formatTime(r.punchOutTime)}</p>
+                    <TimeNotes r={r} />
                   </div>
                   <div className="rounded-xl bg-slate-50 p-2">
                     <p className="text-[10px] font-bold uppercase text-slate-400">Hours</p>

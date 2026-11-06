@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { attendance, employees, leaveRequests, salaryRecords, users } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
 import { formatDate, formatTime, workingHours } from "@/lib/utils";
-import { localWorkDate } from "@/lib/payroll";
+import { dateKey, localWorkDate } from "@/lib/payroll";
 import { loadEmployeeOrg } from "@/lib/org";
 
 type Period = "daily" | "weekly" | "monthly" | "yearly";
@@ -100,6 +100,8 @@ export async function GET(req: Request) {
         "Punch Out": formatTime(r.punchOutTime),
         Hours: workingHours(r.punchInTime, r.punchOutTime),
         Status: r.status,
+        "Early Leave (min)": r.earlyLeaveMinutes,
+        "Overtime (min)": r.overtimeMinutes,
         "Manual Edit": r.isManual ? "Yes" : "No",
       });
     }
@@ -143,10 +145,14 @@ export async function GET(req: Request) {
         Employee: u?.fullName ?? r.employeeId,
         Department: deptNames(r.employeeId),
         Month: `${r.year}-${String(r.month).padStart(2, "0")}`,
+        Cycle: r.periodStart && r.periodEnd ? `${dateKey(r.periodStart)} to ${dateKey(r.periodEnd)}` : "",
         Status: r.status,
         "Basic Salary": r.basicSalary,
         "Attendance Salary": r.attendanceSalary,
+        "Overtime Pay": r.overtimePay,
+        "Bonuses / Allowances": r.additions.reduce((s, a) => s + Number(a.amount), 0),
         "Late Deduction": r.lateDeduction,
+        "Early-Leave Deduction": r.earlyLeaveDeduction,
         "Half-Day Deduction": r.halfDayDeduction,
         "Leave Deduction": r.leaveDeduction,
         "Salary Hold": r.salaryHoldAmount,

@@ -10,14 +10,19 @@ import {
   salaryRecords,
 } from "@/db/schema";
 import type { CompanySettings, SalaryHold, SalaryRecord } from "@/db/schema";
-import { holidayKeys, weeklyOffOf } from "@/lib/company";
+import { holidayKeys, shiftOf, summaryRulesOf, weeklyOffOf } from "@/lib/company";
 import {
+  addDays,
   computeSalary,
+  cyclePeriod,
   dateKey,
   localWorkDate,
+  periodWorkdays,
+  shiftHours,
   summarizeMonth,
   type DayRecord,
   type MonthSummary,
+  type Period,
   type SalaryResult,
 } from "@/lib/payroll";
 
@@ -29,6 +34,8 @@ export interface SalaryComputation {
   summary: MonthSummary;
   result: SalaryResult;
   otherDeductions: { label: string; amount: number }[];
+  additions: { label: string; amount: number }[];
+  period: Period; // the pay period this cycle covers (inclusive)
   holds: {
     occurrenceDate: Date;
     days: number;
@@ -69,8 +76,6 @@ export async function computeMonth(
   if (!emp) throw new Error("Employee not found");
 
   const settings = await loadSettings(companyId);
-  const start = new Date(Date.UTC(year, month - 1, 1));
-  const end = new Date(Date.UTC(year, month, 1)); // exclusive
 
   const existingRows = await db
     .select()
@@ -79,6 +84,18 @@ export async function computeMonth(
     .limit(1);
   const record = existingRows[0] ?? null;
 
+  // Finalized / paid records keep the period they were calculated for, even if the cycle setting changes later.
+  // Records finalized before salary cycles existed have no stored period; they were calendar months.
+  const isFrozen = !!record && record.status !== "draft";
+  const period: Period =
+    isFrozen && record?.periodStart && record.periodEnd
+      ? { start: record.periodStart, end: record.periodEnd }
+      : isFrozen
+        ? cyclePeriod(year, month, 1)
+        : cyclePeriod(year, month, settings.salaryCycleStartDay);
+  const start = period.start;
+  const end = addDays(period.end, 1); // exclusive
+
   const storedHolds = await db
     .select()
     .from(salaryHolds)
@@ -86,6 +103,7 @@ export async function computeMonth(
   const holdByDay = new Map(storedHolds.map((h) => [dateKey(h.occurrenceDate), h]));
 
   const otherDeductions = (record?.otherDeductions ?? []) as { label: string; amount: number }[];
+  const additions = (record?.additions ?? []) as { label: string; amount: number }[];
 
   const [att, leaves, holidays] = await Promise.all([
     db
@@ -107,11 +125,20 @@ export async function computeMonth(
   ]);
 
   const records = new Map<string, DayRecord>();
-  for (const r of att) records.set(dateKey(r.workDate), { status: r.status, hasPunchIn: !!r.punchInTime });
+  for (const r of att) {
+    records.set(dateKey(r.workDate), {
+      status: r.status,
+      hasPunchIn: !!r.punchInTime,
+      earlyLeaveMinutes: r.earlyLeaveMinutes,
+      overtimeMinutes: r.overtimeMinutes,
+    });
+  }
 
   const summary = summarizeMonth({
     year,
     month,
+    period,
+    rules: summaryRulesOf(settings),
     weeklyOff: weeklyOffOf(settings),
     holidays,
     records,
@@ -127,10 +154,20 @@ export async function computeMonth(
   const holdDaysEach = settings.unapprovedHoldDays ?? 2;
   const basicSalary = record && record.status !== "draft" ? Number(record.basicSalary) : Number(emp.basicSalary);
 
+  // Daily rate divisor: a fixed "work days per month", or the real number of working days in this cycle.
+  const cycleWorkdays = periodWorkdays(period, weeklyOffOf(settings), holidays).length;
+  const workDays = settings.dailyRateBasis === "cycle" ? Math.max(1, cycleWorkdays) : settings.workDaysPerMonth;
+  const shift = shiftOf(settings, emp);
+
   const result = computeSalary({
     basicSalary,
-    workDaysPerMonth: settings.workDaysPerMonth,
+    workDaysPerMonth: workDays,
     summary,
+    earlyLeaveRule: rule(settings.earlyLeaveDeductionType, settings.earlyLeaveDeductionValue),
+    lateMarks: { limit: settings.lateMarksLimit, penaltyDays: Number(settings.lateMarksPenaltyDays) },
+    overtime: settings.overtimeEnabled ? { rate: Number(settings.overtimeRate) } : undefined,
+    shiftHours: shiftHours(shift.start, shift.end),
+    additions,
     lateRule: rule(settings.lateDeductionType, settings.lateDeductionValue),
     halfDayRule: rule(settings.halfDayDeductionType, settings.halfDayDeductionValue),
     leaveRule: rule(settings.leaveDeductionType, settings.leaveDeductionValue),
@@ -148,10 +185,14 @@ export async function computeMonth(
     finalResult = {
       dailyRate: n(record.dailyRate),
       attendanceSalary: n(record.attendanceSalary),
-      lateDeduction: n(record.lateDeduction),
+      lateDeduction: n(record.lateDeduction), // stored value already includes the late-marks penalty
+      lateMarksDeduction: 0,
+      earlyLeaveDeduction: n(record.earlyLeaveDeduction),
       halfDayDeduction: n(record.halfDayDeduction),
       leaveDeduction: n(record.leaveDeduction),
       otherTotal: otherDeductions.reduce((t, d) => t + Number(d.amount || 0), 0),
+      overtimePay: n(record.overtimePay),
+      additionsTotal: additions.reduce((t, a) => t + Number(a.amount || 0), 0),
       totalDeductions: n(record.totalDeductions),
       holdDays: record.salaryHoldDays,
       holdAmount: n(record.salaryHoldAmount),
@@ -165,6 +206,8 @@ export async function computeMonth(
       lateDays: record.lateDays,
       halfDays: record.halfDays,
       leaveDays: n(record.leaveDays),
+      earlyLeaveDays: record.earlyLeaveDays,
+      overtimeMinutes: record.overtimeMinutes,
     };
   }
 
@@ -179,7 +222,7 @@ export async function computeMonth(
     };
   });
 
-  return { year, month, employeeId, basicSalary, summary: finalSummary, result: finalResult, otherDeductions, holds, record, frozen };
+  return { year, month, employeeId, basicSalary, summary: finalSummary, result: finalResult, otherDeductions, additions, period, holds, record, frozen };
 }
 
 /** Persists the computed month as a DRAFT (or refreshes an existing draft) and syncs hold rows. */
@@ -198,10 +241,18 @@ export async function saveDraft(companyId: string, employeeId: string, year: num
     leaveDays: summary.leaveDays.toFixed(1),
     unapprovedLeaveCount: summary.unapprovedOccurrences.length,
     attendanceSalary: result.attendanceSalary.toFixed(2),
-    lateDeduction: result.lateDeduction.toFixed(2),
+    // the "every N late marks" penalty is stored together with the per-late deduction
+    lateDeduction: (result.lateDeduction + result.lateMarksDeduction).toFixed(2),
+    earlyLeaveDays: summary.earlyLeaveDays ?? 0,
+    earlyLeaveDeduction: result.earlyLeaveDeduction.toFixed(2),
+    overtimeMinutes: summary.overtimeMinutes ?? 0,
+    overtimePay: result.overtimePay.toFixed(2),
+    periodStart: c.period.start,
+    periodEnd: c.period.end,
     halfDayDeduction: result.halfDayDeduction.toFixed(2),
     leaveDeduction: result.leaveDeduction.toFixed(2),
     otherDeductions: c.otherDeductions,
+    additions: c.additions,
     salaryHoldDays: result.holdDays,
     salaryHoldAmount: result.holdAmount.toFixed(2),
     totalDeductions: result.totalDeductions.toFixed(2),

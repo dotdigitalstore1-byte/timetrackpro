@@ -14,6 +14,14 @@ export function formatDate(d: Date | string | null | undefined): string {
   return date.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
 }
 
+/** Formats a plain calendar date ("YYYY-MM-DD") without any timezone shift. */
+export function formatDayKey(key: string | null | undefined): string {
+  if (!key) return "—";
+  const d = new Date(`${key.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" });
+}
+
 export function formatTime(d: Date | string | null | undefined): string {
   if (!d) return "—";
   const date = typeof d === "string" ? new Date(d) : d;

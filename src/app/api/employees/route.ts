@@ -3,7 +3,9 @@ import { and, asc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLogs, employees, users } from "@/db/schema";
 import { getAuth, hashPassword } from "@/lib/auth";
+import { shiftOf } from "@/lib/company";
 import { loadEmployeeOrg, parseIdList, replaceEmployeeOrg, validateOrgIds } from "@/lib/org";
+import { isValidHHMM, parseHHMM } from "@/lib/payroll";
 
 export async function GET() {
   const ctx = await getAuth();
@@ -64,6 +66,9 @@ export async function GET() {
       departments: orgByEmployee.get(r.employees.id)?.departments ?? [],
       locations: orgByEmployee.get(r.employees.id)?.locations ?? [],
       designation: r.employees.designation,
+      // effective shift = the employee's own times, or the company default if none were set
+      shiftStart: ctx.settings ? shiftOf(ctx.settings, r.employees).start : r.employees.shiftStart,
+      shiftEnd: ctx.settings ? shiftOf(ctx.settings, r.employees).end : r.employees.shiftEnd,
       // salary is confidential: managers never receive it
       basicSalary: ctx.user.role === "company_admin" ? r.employees.basicSalary : null,
       hireDate: r.employees.hireDate,
@@ -90,6 +95,16 @@ export async function POST(req: Request) {
   const departmentIds = parseIdList(body.departmentIds);
   const locationIds = parseIdList(body.locationIds);
   const designation = String(body.designation || "").trim();
+  // Shift: omitted -> company default; supplied -> must be valid and end after start.
+  const defaultShift = ctx.settings ? shiftOf(ctx.settings, null) : { start: "09:00", end: "18:00" };
+  const shiftStart = body.shiftStart ? String(body.shiftStart) : defaultShift.start;
+  const shiftEnd = body.shiftEnd ? String(body.shiftEnd) : defaultShift.end;
+  if (!isValidHHMM(shiftStart) || !isValidHHMM(shiftEnd)) {
+    return NextResponse.json({ error: "Punch-in and punch-out times must be valid times (HH:MM)." }, { status: 400 });
+  }
+  if (parseHHMM(shiftEnd) <= parseHHMM(shiftStart)) {
+    return NextResponse.json({ error: "Punch-out time must be later than punch-in time." }, { status: 400 });
+  }
   const basicSalary = String(Number(body.basicSalary) || "0");
   const managerId = body.managerId ? String(body.managerId) : null;
   const phone = String(body.phone || "").trim();
@@ -129,7 +144,7 @@ export async function POST(req: Request) {
 
       const [emp] = await tx
         .insert(employees)
-        .values({ companyId, userId: user.id, employeeCode, designation, basicSalary, managerId, hireDate })
+        .values({ companyId, userId: user.id, employeeCode, designation, shiftStart, shiftEnd, basicSalary, managerId, hireDate })
         .returning();
 
       await replaceEmployeeOrg(tx, emp.id, departmentIds, locationIds);
@@ -140,7 +155,7 @@ export async function POST(req: Request) {
         action: "employee.create",
         entity: "employee",
         entityId: emp.id,
-        details: { fullName, email, role, designation, basicSalary, departmentIds, locationIds },
+        details: { fullName, email, role, designation, shiftStart, shiftEnd, basicSalary, departmentIds, locationIds },
       });
       return emp.id;
     });

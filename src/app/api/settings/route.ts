@@ -35,19 +35,24 @@ export async function POST(req: Request) {
       const n = Number(v);
       return Number.isFinite(n) ? n : fallback;
     };
+    const clampInt = (v: unknown, lo: number, hi: number, fallback: number) =>
+      Math.min(hi, Math.max(lo, Math.round(numField(v, fallback))));
+    const clampNum = (v: unknown, lo: number, hi: number, fallback: number) =>
+      Math.min(hi, Math.max(lo, numField(v, fallback)));
+    const dedType = (v: unknown) => (v === "fixed" ? "fixed" : "percentage");
     if (typeof s.shiftStart === "string" && /^\d{2}:\d{2}$/.test(s.shiftStart)) update.shiftStart = s.shiftStart;
     if (typeof s.shiftEnd === "string" && /^\d{2}:\d{2}$/.test(s.shiftEnd)) update.shiftEnd = s.shiftEnd;
-    if (s.graceMinutes !== undefined) update.graceMinutes = numField(s.graceMinutes, 5);
-    if (s.lateThresholdMinutes !== undefined) update.lateThresholdMinutes = numField(s.lateThresholdMinutes, 30);
+    if (s.graceMinutes !== undefined) update.graceMinutes = clampInt(s.graceMinutes, 0, 120, 5);
+    if (s.lateThresholdMinutes !== undefined) update.lateThresholdMinutes = clampInt(s.lateThresholdMinutes, 0, 720, 30);
     if (s.halfDayThresholdMinutes !== undefined) update.halfDayThresholdMinutes = numField(s.halfDayThresholdMinutes, 120);
     if (s.lateDeductionType !== undefined) update.lateDeductionType = s.lateDeductionType === "fixed" ? "fixed" : "percentage";
-    if (s.lateDeductionValue !== undefined) update.lateDeductionValue = String(numField(s.lateDeductionValue, 5));
+    if (s.lateDeductionValue !== undefined) update.lateDeductionValue = String(Math.max(0, numField(s.lateDeductionValue, 5)));
     if (s.halfDayDeductionType !== undefined) update.halfDayDeductionType = s.halfDayDeductionType === "fixed" ? "fixed" : "percentage";
-    if (s.halfDayDeductionValue !== undefined) update.halfDayDeductionValue = String(numField(s.halfDayDeductionValue, 50));
+    if (s.halfDayDeductionValue !== undefined) update.halfDayDeductionValue = String(Math.max(0, numField(s.halfDayDeductionValue, 50)));
     if (s.leaveDeductionType !== undefined) update.leaveDeductionType = s.leaveDeductionType === "fixed" ? "fixed" : "percentage";
-    if (s.leaveDeductionValue !== undefined) update.leaveDeductionValue = String(numField(s.leaveDeductionValue, 100));
-    if (s.unapprovedHoldDays !== undefined) update.unapprovedHoldDays = Math.max(0, numField(s.unapprovedHoldDays, 2));
-    if (s.workDaysPerMonth !== undefined) update.workDaysPerMonth = Math.max(1, numField(s.workDaysPerMonth, 26));
+    if (s.leaveDeductionValue !== undefined) update.leaveDeductionValue = String(Math.max(0, numField(s.leaveDeductionValue, 100)));
+    if (s.unapprovedHoldDays !== undefined) update.unapprovedHoldDays = clampInt(s.unapprovedHoldDays, 0, 30, 2);
+    if (s.workDaysPerMonth !== undefined) update.workDaysPerMonth = clampInt(s.workDaysPerMonth, 1, 31, 26);
     if (s.currency !== undefined && String(s.currency).trim()) update.currency = String(s.currency).trim().slice(0, 10);
     if (s.approvalLevels !== undefined) update.approvalLevels = s.approvalLevels === 2 ? 2 : 1;
     if (s.timezone !== undefined) {
@@ -61,11 +66,49 @@ export async function POST(req: Request) {
       update.weeklyOff = days.sort().join(",");
     }
     if (s.annualLeaveDays !== undefined) update.annualLeaveDays = Math.min(365, Math.max(0, Math.round(numField(s.annualLeaveDays, 12))));
+    // ---- Rules: early leave
+    if (s.earlyLeaveGraceMinutes !== undefined) update.earlyLeaveGraceMinutes = clampInt(s.earlyLeaveGraceMinutes, 0, 120, 5);
+    if (s.earlyLeaveHalfDayMinutes !== undefined) update.earlyLeaveHalfDayMinutes = clampInt(s.earlyLeaveHalfDayMinutes, 0, 720, 0);
+    if (s.earlyLeaveDeductionType !== undefined) update.earlyLeaveDeductionType = dedType(s.earlyLeaveDeductionType);
+    if (s.earlyLeaveDeductionValue !== undefined) update.earlyLeaveDeductionValue = String(Math.max(0, numField(s.earlyLeaveDeductionValue, 0)));
+    // ---- Rules: late marks
+    if (s.lateMarksLimit !== undefined) update.lateMarksLimit = clampInt(s.lateMarksLimit, 0, 31, 0);
+    if (s.lateMarksPenaltyDays !== undefined) update.lateMarksPenaltyDays = String(clampNum(s.lateMarksPenaltyDays, 0, 5, 0.5));
+    // ---- Rules: overtime
+    if (typeof s.overtimeEnabled === "boolean") update.overtimeEnabled = s.overtimeEnabled;
+    if (s.overtimeMinMinutes !== undefined) update.overtimeMinMinutes = clampInt(s.overtimeMinMinutes, 0, 240, 30);
+    if (s.overtimeRate !== undefined) update.overtimeRate = String(clampNum(s.overtimeRate, 1, 5, 1.5));
+    if (s.overtimeMaxMinutesPerDay !== undefined) update.overtimeMaxMinutesPerDay = clampInt(s.overtimeMaxMinutesPerDay, 30, 720, 240);
+    // ---- Salary cycle
+    if (s.salaryCycleStartDay !== undefined) update.salaryCycleStartDay = clampInt(s.salaryCycleStartDay, 1, 28, 1);
+    if (s.salaryPayDelayDays !== undefined) update.salaryPayDelayDays = clampInt(s.salaryPayDelayDays, 0, 60, 5);
+    if (s.dailyRateBasis !== undefined) update.dailyRateBasis = s.dailyRateBasis === "cycle" ? "cycle" : "fixed";
+
     const hhmm = /^([01]\d|2[0-3]):[0-5]\d$/;
     if (typeof update.shiftStart === "string" && !hhmm.test(update.shiftStart)) return NextResponse.json({ error: "Shift start must be HH:MM (24h)." }, { status: 400 });
     if (typeof update.shiftEnd === "string" && !hhmm.test(update.shiftEnd)) return NextResponse.json({ error: "Shift end must be HH:MM (24h)." }, { status: 400 });
 
     const existing = await db.select().from(companySettings).where(eq(companySettings.companyId, companyId)).limit(1);
+
+    const merged = { ...(existing[0] ?? {}), ...update } as Record<string, unknown>;
+    const mNum = (k: string) => Number(merged[k] ?? 0);
+    if (mNum("lateThresholdMinutes") < mNum("graceMinutes")) {
+      return NextResponse.json({ error: "The half-day cut-off must be later than the cool-off (grace) time." }, { status: 400 });
+    }
+    for (const [typeKey, valueKey, label] of [
+      ["lateDeductionType", "lateDeductionValue", "Late deduction"],
+      ["halfDayDeductionType", "halfDayDeductionValue", "Half-day deduction"],
+      ["leaveDeductionType", "leaveDeductionValue", "Leave deduction"],
+      ["earlyLeaveDeductionType", "earlyLeaveDeductionValue", "Early-leave deduction"],
+    ] as const) {
+      if (merged[typeKey] === "percentage" && mNum(valueKey) > 100) {
+        return NextResponse.json({ error: `${label} cannot be more than 100%.` }, { status: 400 });
+      }
+    }
+    if (mNum("earlyLeaveHalfDayMinutes") > 0 && mNum("earlyLeaveHalfDayMinutes") < mNum("earlyLeaveGraceMinutes")) {
+      return NextResponse.json({ error: "The early-leave half-day limit must be longer than the early-leave cool-off time." }, { status: 400 });
+    }
+
     if (existing[0]) {
       await db.update(companySettings).set(update).where(eq(companySettings.companyId, companyId));
     } else {

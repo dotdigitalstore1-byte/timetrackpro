@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, useMe } from "@/lib/client";
 import { Badge, Button, Card, Input, PageHeader, Spinner } from "@/components/ui";
-import { formatDate, formatNumber, monthLabel } from "@/lib/utils";
+import { formatDate, formatDayKey, formatNumber, monthLabel } from "@/lib/utils";
 
 interface SalaryData {
   employee: { id: string; fullName: string; designation: string | null } | null;
   month: number;
   year: number;
+  period: { start: string; end: string };
+  payDate: string;
   status: "preview" | "draft" | "finalized" | "paid";
   frozen: boolean;
   breakdown: {
@@ -22,6 +24,12 @@ interface SalaryData {
     unapprovedLeaveCount: number;
     attendanceSalary: number;
     lateDeduction: number;
+    earlyLeaveDays: number;
+    earlyLeaveDeduction: number;
+    overtimeMinutes: number;
+    overtimePay: number;
+    additions: { label: string; amount: number }[];
+    additionsTotal: number;
     halfDayDeduction: number;
     leaveDeduction: number;
     otherDeductions: { label: string; amount: number }[];
@@ -32,7 +40,7 @@ interface SalaryData {
     netPayable: number;
   };
   holds: { id: string | null; days: number; amount: number; reason: string; occurrenceDate: string; status: string }[];
-  history: { id: string; month: number; year: number; basicSalary: string; attendanceSalary: string; totalDeductions: string; salaryHoldAmount: string; netPayable: string; status: string }[];
+  history: { id: string; month: number; year: number; periodStart: string | null; periodEnd: string | null; basicSalary: string; attendanceSalary: string; totalDeductions: string; salaryHoldAmount: string; netPayable: string; status: string }[];
 }
 
 const STATUS_TONE: Record<string, "slate" | "amber" | "indigo" | "green"> = {
@@ -58,6 +66,8 @@ export default function SalaryPage() {
   const [loadError, setLoadError] = useState("");
   const [dLabel, setDLabel] = useState("");
   const [dAmount, setDAmount] = useState("");
+  const [aLabel, setALabel] = useState("");
+  const [aAmount, setAAmount] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -118,7 +128,7 @@ export default function SalaryPage() {
 
       <Card className="mb-4">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Input label="Month" type="month" value={month} onChange={setMonth} />
+          <Input label="Salary cycle (month it ends in)" type="month" value={month} onChange={setMonth} />
           {isAdmin && (
             <label className="block">
               <span className="mb-1 block text-xs font-semibold text-slate-600">Employee</span>
@@ -140,7 +150,7 @@ export default function SalaryPage() {
             <Button size="sm" variant="secondary" loading={busy === "finalize_all"} onClick={() => act("finalize_all", {}, "Finalize payroll for ALL active employees for this month? Finalized months cannot be recalculated.")}>
               Finalize whole month
             </Button>
-            <span className="text-[11px] text-slate-400">Available once the month has ended.</span>
+            <span className="text-[11px] text-slate-400">Available once the salary cycle has ended.</span>
           </div>
         )}
         {msg && <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700">{msg}</p>}
@@ -169,6 +179,9 @@ export default function SalaryPage() {
             </div>
             <p className="mt-1 text-3xl font-bold">{currency}{formatNumber(b.netPayable)}</p>
             <p className="text-xs text-indigo-200">Payable now{b.salaryHoldAmount > 0 ? ` · ${currency}${formatNumber(b.salaryHoldAmount)} on hold` : ""}</p>
+            <p className="mt-2 text-xs text-indigo-100">
+              Cycle {formatDayKey(data.period.start)} – {formatDayKey(data.period.end)} · Pay date {formatDayKey(data.payDate)}
+            </p>
           </div>
 
           {canEdit || (isAdmin && employeeId) ? (
@@ -196,11 +209,37 @@ export default function SalaryPage() {
                 <Row label="Full days present (incl. late)" value={`${formatNumber(b.presentDays, 0)}`} />
                 <Row label="Unpaid unapproved absences" value={`${formatNumber(b.absentDays, 0)} day(s)`} />
                 <Row label="Attendance-based salary" value={`${currency}${formatNumber(b.attendanceSalary)}`} bold />
+                {(b.overtimePay > 0 || b.overtimeMinutes > 0) && (
+                  <Row label={`Overtime (${formatNumber(b.overtimeMinutes / 60, 1)} h)`} value={`+${currency}${formatNumber(b.overtimePay)}`} />
+                )}
+                {b.additions.map((a, i) => (
+                  <div key={i} className="flex items-center justify-between">
+                    <span className="text-slate-500">{a.label}</span>
+                    <span className="flex items-center gap-2 font-semibold text-emerald-600">
+                      +{currency}{formatNumber(a.amount)}
+                      {canEdit && (
+                        <button onClick={() => act("remove_addition", { index: i })} className="text-[11px] font-semibold text-slate-400 hover:text-rose-600" aria-label="Remove bonus">✕</button>
+                      )}
+                    </span>
+                  </div>
+                ))}
               </div>
+              {canEdit && (
+                <div className="mt-3 grid grid-cols-1 items-end gap-2 rounded-xl bg-slate-50 p-3 sm:grid-cols-5">
+                  <div className="sm:col-span-3"><Input label="Bonus / allowance" value={aLabel} onChange={setALabel} placeholder="e.g. Festival bonus" /></div>
+                  <div className="sm:col-span-2"><Input label="Amount" type="number" value={aAmount} onChange={setAAmount} /></div>
+                  <Button className="sm:col-span-5" size="sm" variant="secondary" disabled={!aLabel.trim() || !(Number(aAmount) > 0)} onClick={async () => { await act("add_addition", { label: aLabel, amount: Number(aAmount) }); setALabel(""); setAAmount(""); }}>
+                    Add bonus
+                  </Button>
+                </div>
+              )}
 
               <h3 className="mb-2 mt-5 font-bold text-slate-900">Deductions</h3>
               <div className="space-y-2 text-sm">
-                <Row label={`Late attendance (${b.lateDays} day(s))`} value={`-${currency}${formatNumber(b.lateDeduction)}`} negative />
+                <Row label={`Late attendance (${b.lateDays} day(s), incl. late-marks rule)`} value={`-${currency}${formatNumber(b.lateDeduction)}`} negative />
+                {(b.earlyLeaveDays > 0 || b.earlyLeaveDeduction > 0) && (
+                  <Row label={`Early leave (${b.earlyLeaveDays} day(s))`} value={`-${currency}${formatNumber(b.earlyLeaveDeduction)}`} negative />
+                )}
                 <Row label={`Half-day (${b.halfDays} day(s))`} value={`-${currency}${formatNumber(b.halfDayDeduction)}`} negative />
                 <Row label={`Approved leave (${formatNumber(b.leaveDays, 0)} day(s))`} value={`-${currency}${formatNumber(b.leaveDeduction)}`} negative />
                 {b.otherDeductions.map((d, i) => (
@@ -274,8 +313,8 @@ export default function SalaryPage() {
                   {data.history.map((h) => (
                     <div key={h.id} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-sm">
                       <div>
-                        <p className="font-semibold text-slate-700">{monthLabel(h.year, h.month)} <Badge tone={STATUS_TONE[h.status] ?? "slate"}>{h.status}</Badge></p>
-                        <p className="text-xs text-slate-400">Gross {currency}{formatNumber(h.attendanceSalary)} · Deductions {currency}{formatNumber(h.totalDeductions)} · Held {currency}{formatNumber(h.salaryHoldAmount)}</p>
+                        <p className="font-semibold text-slate-700">{h.periodStart && h.periodEnd ? `${formatDayKey(h.periodStart)} – ${formatDayKey(h.periodEnd)}` : monthLabel(h.year, h.month)} <Badge tone={STATUS_TONE[h.status] ?? "slate"}>{h.status}</Badge></p>
+                        <p className="text-xs text-slate-400">Earned {currency}{formatNumber(h.attendanceSalary)} · Deductions {currency}{formatNumber(h.totalDeductions)} · Held {currency}{formatNumber(h.salaryHoldAmount)}</p>
                       </div>
                       <p className="font-bold text-emerald-600">{currency}{formatNumber(h.netPayable)}</p>
                     </div>

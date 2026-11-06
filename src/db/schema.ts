@@ -89,6 +89,25 @@ export const companySettings = pgTable("company_settings", {
   timezone: varchar("timezone", { length: 50 }).notNull().default("UTC"),
   weeklyOff: varchar("weekly_off", { length: 20 }).notNull().default("0,6"), // JS weekdays: 0=Sun … 6=Sat
   annualLeaveDays: integer("annual_leave_days").notNull().default(12),
+
+  // ---- Rules: early leave (all default OFF so existing companies behave exactly as before)
+  earlyLeaveGraceMinutes: integer("early_leave_grace_minutes").notNull().default(5), // leaving up to this early is fine
+  earlyLeaveHalfDayMinutes: integer("early_leave_half_day_minutes").notNull().default(0), // leaving MORE than this early = half day (0 = off)
+  earlyLeaveDeductionType: varchar("early_leave_deduction_type", { length: 20 }).notNull().default("percentage"),
+  earlyLeaveDeductionValue: numeric("early_leave_deduction_value", { precision: 10, scale: 2 }).notNull().default("0"),
+  // ---- Rules: "every N late marks cost X days of salary" (0 = off)
+  lateMarksLimit: integer("late_marks_limit").notNull().default(0),
+  lateMarksPenaltyDays: numeric("late_marks_penalty_days", { precision: 4, scale: 2 }).notNull().default("0.5"),
+  // ---- Rules: overtime (off by default)
+  overtimeEnabled: boolean("overtime_enabled").notNull().default(false),
+  overtimeMinMinutes: integer("overtime_min_minutes").notNull().default(30), // must stay at least this long past shift end
+  overtimeRate: numeric("overtime_rate", { precision: 4, scale: 2 }).notNull().default("1.5"), // pay multiplier
+  overtimeMaxMinutesPerDay: integer("overtime_max_minutes_per_day").notNull().default(240),
+  // ---- Salary cycle
+  salaryCycleStartDay: integer("salary_cycle_start_day").notNull().default(1), // 1 = calendar month; 26 = 26th -> 25th
+  salaryPayDelayDays: integer("salary_pay_delay_days").notNull().default(5), // pay date = cycle end + N days
+  dailyRateBasis: varchar("daily_rate_basis", { length: 10 }).notNull().default("fixed"), // fixed | cycle
+
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -168,6 +187,9 @@ export const employees = pgTable(
   // Kept only so `npm run db:backfill` can migrate old data; safe to drop afterwards.
   department: varchar("department", { length: 100 }),
   designation: varchar("designation", { length: 100 }),
+  // Personal shift ("HH:MM", company local time). null = use the company default shift.
+  shiftStart: varchar("shift_start", { length: 5 }),
+  shiftEnd: varchar("shift_end", { length: 5 }),
   basicSalary: numeric("basic_salary", { precision: 12, scale: 2 }).notNull().default("0"),
   hireDate: timestamp("hire_date", { withTimezone: true }).notNull().defaultNow(),
   managerId: uuid("manager_id"),
@@ -238,6 +260,8 @@ export const attendance = pgTable(
   status: varchar("status", { length: 20 }).notNull().default("present"), // present | late | half_day | absent | on_leave
   isManual: boolean("is_manual").notNull().default(false),
   note: text("note"),
+  earlyLeaveMinutes: integer("early_leave_minutes").notNull().default(0), // minutes before shift end (set at punch-out)
+  overtimeMinutes: integer("overtime_minutes").notNull().default(0), // raw minutes after shift end (set at punch-out)
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -316,6 +340,15 @@ export const salaryRecords = pgTable(
   halfDayDeduction: numeric("half_day_deduction", { precision: 12, scale: 2 }).notNull().default("0"),
   leaveDeduction: numeric("leave_deduction", { precision: 12, scale: 2 }).notNull().default("0"),
   otherDeductions: jsonb("other_deductions").$type<{ label: string; amount: number }[]>().notNull().default([]),
+  // bonuses / allowances added for this cycle
+  additions: jsonb("additions").$type<{ label: string; amount: number }[]>().notNull().default([]),
+  earlyLeaveDays: integer("early_leave_days").notNull().default(0),
+  earlyLeaveDeduction: numeric("early_leave_deduction", { precision: 12, scale: 2 }).notNull().default("0"),
+  overtimeMinutes: integer("overtime_minutes").notNull().default(0),
+  overtimePay: numeric("overtime_pay", { precision: 12, scale: 2 }).notNull().default("0"),
+  // the exact pay period this record covers (kept so history stays right if the cycle setting changes later)
+  periodStart: timestamp("period_start", { withTimezone: true }),
+  periodEnd: timestamp("period_end", { withTimezone: true }),
   salaryHoldDays: integer("salary_hold_days").notNull().default(0),
   salaryHoldAmount: numeric("salary_hold_amount", { precision: 12, scale: 2 }).notNull().default("0"),
   totalDeductions: numeric("total_deductions", { precision: 14, scale: 2 }).notNull().default("0"),

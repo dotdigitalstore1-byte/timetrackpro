@@ -62,11 +62,17 @@ export default function SettingsPage() {
   }, [load]);
 
   const saveSettings = async () => {
+    if (!settings) return;
     setSaving(true);
     setMessage("");
     setError("");
     try {
-      await api("/api/settings", { method: "POST", body: JSON.stringify({ settings }) });
+      // Only this page's own fields: attendance rules and salary cycle are saved from the Rules page.
+      const { shiftStart, shiftEnd, timezone, annualLeaveDays, weeklyOff, currency, approvalLevels } = settings;
+      await api("/api/settings", {
+        method: "POST",
+        body: JSON.stringify({ settings: { shiftStart, shiftEnd, timezone, annualLeaveDays, weeklyOff, currency, approvalLevels } }),
+      });
       setMessage("Settings saved.");
       await load();
     } catch (e) {
@@ -110,20 +116,21 @@ export default function SettingsPage() {
 
   return (
     <div>
-      <PageHeader title="Company Settings" subtitle="Attendance rules, salary & deduction policies, holidays" />
+      <PageHeader title="Company Settings" subtitle="Company basics: working hours, calendar, holidays" />
 
       {message && <p className="mb-4 rounded-xl bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">{message}</p>}
       {error && <p className="mb-4 rounded-xl bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">{error}</p>}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
-          <h3 className="mb-3 font-bold text-slate-900">Attendance Rules</h3>
+          <h3 className="mb-3 font-bold text-slate-900">Working hours &amp; calendar</h3>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Input label="Shift start (HH:MM)" value={settings.shiftStart} onChange={(v) => set({ shiftStart: v })} />
-            <Input label="Shift end (HH:MM)" value={settings.shiftEnd} onChange={(v) => set({ shiftEnd: v })} />
-            <Input label="Grace period (minutes)" type="number" value={settings.graceMinutes} onChange={(v) => set({ graceMinutes: Number(v) })} />
-            <Input label="Late threshold (minutes)" type="number" value={settings.lateThresholdMinutes} onChange={(v) => set({ lateThresholdMinutes: Number(v) })} />
+            <Input label="Default punch-in time" type="time" value={settings.shiftStart} onChange={(v) => set({ shiftStart: v })} />
+            <Input label="Default punch-out time" type="time" value={settings.shiftEnd} onChange={(v) => set({ shiftEnd: v })} />
           </div>
+          <p className="mt-1 text-[11px] text-slate-400">
+            Used for new employees and anyone without a personal shift. Each employee&apos;s own punch-in / punch-out time is set on the Employees page.
+          </p>
           <div className="mt-3 grid grid-cols-2 gap-3">
             <label className="block">
               <span className="mb-1 block text-xs font-semibold text-slate-600">Timezone (IANA)</span>
@@ -168,49 +175,12 @@ export default function SettingsPage() {
             </div>
             <p className="mt-1 text-[11px] text-slate-400">Highlighted days are weekly offs. Absences are never counted on weekly offs or holidays.</p>
           </div>
-          <p className="mt-2 text-[11px] text-slate-400">Arrival within grace = present · within late threshold = late · beyond threshold = half-day.</p>
 
-          <h3 className="mb-2 mt-5 font-bold text-slate-900">Late / Half-Day Deductions</h3>
+          <h3 className="mb-2 mt-5 font-bold text-slate-900">General</h3>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Select
-              label="Late deduction type"
-              value={settings.lateDeductionType}
-              onChange={(v) => set({ lateDeductionType: v })}
-              options={[
-                { value: "percentage", label: "% of daily rate" },
-                { value: "fixed", label: "Fixed amount" },
-              ]}
-            />
-            <Input label="Late deduction value" type="number" value={settings.lateDeductionValue} onChange={(v) => set({ lateDeductionValue: v })} />
-            <Select
-              label="Half-day deduction type"
-              value={settings.halfDayDeductionType}
-              onChange={(v) => set({ halfDayDeductionType: v })}
-              options={[
-                { value: "percentage", label: "% of daily rate" },
-                { value: "fixed", label: "Fixed amount" },
-              ]}
-            />
-            <Input label="Half-day deduction value" type="number" value={settings.halfDayDeductionValue} onChange={(v) => set({ halfDayDeductionValue: v })} />
-          </div>
-
-          <h3 className="mb-2 mt-5 font-bold text-slate-900">Leave & Salary Policy</h3>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Select
-              label="Approved leave deduction type"
-              value={settings.leaveDeductionType}
-              onChange={(v) => set({ leaveDeductionType: v })}
-              options={[
-                { value: "percentage", label: "% of daily rate" },
-                { value: "fixed", label: "Fixed amount" },
-              ]}
-            />
-            <Input label="Leave deduction value" type="number" value={settings.leaveDeductionValue} onChange={(v) => set({ leaveDeductionValue: v })} />
-            <Input label="Unapproved leave hold (days/occurrence)" type="number" value={settings.unapprovedHoldDays} onChange={(v) => set({ unapprovedHoldDays: Number(v) })} />
-            <Input label="Work days per month" type="number" value={settings.workDaysPerMonth} onChange={(v) => set({ workDaysPerMonth: Number(v) })} />
             <Input label="Currency symbol" value={settings.currency} onChange={(v) => set({ currency: v })} />
             <Select
-              label="Approval levels"
+              label="Leave approval levels"
               value={String(settings.approvalLevels)}
               onChange={(v) => set({ approvalLevels: Number(v) })}
               options={[
@@ -257,14 +227,11 @@ export default function SettingsPage() {
           </Card>
 
           <Card>
-            <h3 className="mb-2 font-bold text-slate-900">How salary is calculated</h3>
-            <ul className="list-inside list-disc space-y-1 text-xs text-slate-500">
-              <li>Daily rate = basic salary ÷ work days per month ({settings.workDaysPerMonth})</li>
-              <li>Attendance salary = daily rate × present days (half-day counts as 0.5)</li>
-              <li>Late, half-day and approved-leave deductions apply per policy above</li>
-              <li>Each unapproved leave occurrence adds a {settings.unapprovedHoldDays}-day salary hold</li>
-              <li>Net payable = attendance salary − all deductions − holds</li>
-            </ul>
+            <h3 className="mb-1 font-bold text-slate-900">Attendance &amp; payroll rules</h3>
+            <p className="mb-3 text-sm text-slate-500">
+              Cool-off time, late and early-leave rules, overtime, deductions and the salary cycle live on the Rules page.
+            </p>
+            <Link href="/rules"><Button variant="secondary" className="w-full">Open Rules</Button></Link>
           </Card>
         </div>
       </div>

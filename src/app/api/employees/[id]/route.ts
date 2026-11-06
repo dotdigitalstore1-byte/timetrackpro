@@ -3,7 +3,9 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLogs, employees, users } from "@/db/schema";
 import { getAuth, hashPassword } from "@/lib/auth";
+import { shiftOf } from "@/lib/company";
 import { parseIdList, replaceEmployeeOrg, validateOrgIds } from "@/lib/org";
+import { isValidHHMM, parseHHMM } from "@/lib/payroll";
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await getAuth();
@@ -34,6 +36,21 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   }
   if (typeof body.employeeCode === "string") empUpdate.employeeCode = body.employeeCode.trim();
   if (typeof body.designation === "string") empUpdate.designation = body.designation.trim();
+
+  // Shift (punch-in / punch-out time). Either can be changed; the result must stay a valid same-day range.
+  if (body.shiftStart !== undefined || body.shiftEnd !== undefined) {
+    const current = ctx.settings ? shiftOf(ctx.settings, emp[0]) : { start: "09:00", end: "18:00" };
+    const nextStart = body.shiftStart !== undefined ? String(body.shiftStart) : current.start;
+    const nextEnd = body.shiftEnd !== undefined ? String(body.shiftEnd) : current.end;
+    if (!isValidHHMM(nextStart) || !isValidHHMM(nextEnd)) {
+      return NextResponse.json({ error: "Punch-in and punch-out times must be valid times (HH:MM)." }, { status: 400 });
+    }
+    if (parseHHMM(nextEnd) <= parseHHMM(nextStart)) {
+      return NextResponse.json({ error: "Punch-out time must be later than punch-in time." }, { status: 400 });
+    }
+    empUpdate.shiftStart = nextStart;
+    empUpdate.shiftEnd = nextEnd;
+  }
   if (body.basicSalary !== undefined && body.basicSalary !== "") {
     const salary = Number(body.basicSalary);
     if (!Number.isFinite(salary) || salary < 0) {

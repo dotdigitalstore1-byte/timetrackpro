@@ -40,6 +40,8 @@ export interface MeData {
     departments: { id: string; name: string }[];
     locations: { id: string; name: string }[];
     designation: string | null;
+    shiftStart: string | null;
+    shiftEnd: string | null;
     basicSalary: string;
     managerId: string | null;
   } | null;

@@ -13,6 +13,8 @@ export function toClientRecord(r: AttendanceRecord) {
     status: r.status,
     isManual: r.isManual,
     note: r.note,
+    earlyLeaveMinutes: r.earlyLeaveMinutes,
+    overtimeMinutes: r.overtimeMinutes,
   };
 }
 

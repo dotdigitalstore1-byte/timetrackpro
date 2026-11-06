@@ -3,8 +3,8 @@ import { and, count, eq, gte, inArray, lt } from "drizzle-orm";
 import { db } from "@/db";
 import { attendance, employees, leaveRequests, salaryRecords } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
-import { holidayKeys, weeklyOffOf } from "@/lib/company";
-import { dateKey, localParts, localWorkDate, parseHHMM, summarizeMonth, type DayRecord } from "@/lib/payroll";
+import { holidayKeys, shiftOf, weeklyOffOf } from "@/lib/company";
+import { addDays, currentCycleKey, cyclePeriod, dateKey, localParts, localWorkDate, parseHHMM, summarizeMonth, type DayRecord } from "@/lib/payroll";
 
 export async function GET() {
   const ctx = await getAuth();
@@ -18,10 +18,11 @@ export async function GET() {
 
   const now = new Date();
   const today = localWorkDate(now, tz);
-  const year = today.getUTCFullYear();
-  const month = today.getUTCMonth() + 1;
-  const monthStart = new Date(Date.UTC(year, month - 1, 1));
-  const monthEnd = new Date(Date.UTC(year, month, 1));
+  // "This month" means the current salary cycle (the calendar month unless the company uses a custom cycle).
+  const { year, month } = currentCycleKey(today, settings.salaryCycleStartDay);
+  const period = cyclePeriod(year, month, settings.salaryCycleStartDay);
+  const monthStart = period.start;
+  const monthEnd = addDays(period.end, 1); // exclusive
 
   let emps = await db.select().from(employees).where(and(eq(employees.companyId, companyId), eq(employees.isActive, true)));
   // Managers only see their own team (plus themselves)
@@ -55,10 +56,16 @@ export async function GET() {
     monthLeaves.filter((l) => l.startDate.getTime() <= today.getTime() && l.endDate.getTime() >= today.getTime()).map((l) => l.employeeId)
   );
 
-  // "Absent" only means something on a working day once the grace window has passed.
+  // "Absent" only means something on a working day once THAT employee's shift start + cool-off has passed.
   const minutesNow = localParts(now, tz).minutes;
-  const afterGrace = minutesNow > parseHHMM(settings.shiftStart) + settings.graceMinutes;
-  const absentToday = isOffDay || !afterGrace ? 0 : ids.filter((id) => !presentIds.has(id) && !onLeaveIds.has(id)).length;
+  const absentToday = isOffDay
+    ? 0
+    : emps.filter(
+        (e) =>
+          !presentIds.has(e.id) &&
+          !onLeaveIds.has(e.id) &&
+          minutesNow > parseHHMM(shiftOf(settings, e).start) + settings.graceMinutes
+      ).length;
 
   // Month-to-date absences use the same rule as payroll (workdays without punch or approved leave)
   let monthAbsent = 0;
@@ -68,6 +75,7 @@ export async function GET() {
     const sum = summarizeMonth({
       year,
       month,
+      period,
       weeklyOff,
       holidays,
       records: recs,

@@ -3,16 +3,16 @@ import { and, desc, eq, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLogs, employees, salaryRecords, users } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
-import { localWorkDate } from "@/lib/payroll";
+import { addDays, currentCycleKey, cyclePeriod, dateKey, localWorkDate } from "@/lib/payroll";
 import { computeMonth, finalizeMonth, releaseHold, saveDraft } from "@/lib/salary";
 
-function parseMonth(value: string | null | undefined, tz: string): { year: number; month: number } {
+/** The requested cycle ("YYYY-MM", named by the month it ends in), or the cycle that contains today. */
+function parseMonth(value: string | null | undefined, tz: string, cycleStartDay: number): { year: number; month: number } {
   if (value && /^\d{4}-(0[1-9]|1[0-2])$/.test(value)) {
     const [y, m] = value.split("-").map(Number);
     return { year: y, month: m };
   }
-  const t = localWorkDate(new Date(), tz);
-  return { year: t.getUTCFullYear(), month: t.getUTCMonth() + 1 };
+  return currentCycleKey(localWorkDate(new Date(), tz), cycleStartDay);
 }
 
 export async function GET(req: Request) {
@@ -21,9 +21,10 @@ export async function GET(req: Request) {
   if (ctx.user.role === "super_admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const companyId = ctx.company!.id;
   const tz = ctx.settings?.timezone ?? "UTC";
+  const cycleStartDay = ctx.settings?.salaryCycleStartDay ?? 1;
 
   const url = new URL(req.url);
-  const { year, month } = parseMonth(url.searchParams.get("month"), tz);
+  const { year, month } = parseMonth(url.searchParams.get("month"), tz, cycleStartDay);
   const requested = url.searchParams.get("employeeId");
 
   let employeeId: string;
@@ -67,6 +68,8 @@ export async function GET(req: Request) {
       : null,
     month,
     year,
+    period: { start: dateKey(c.period.start), end: dateKey(c.period.end) },
+    payDate: dateKey(addDays(c.period.end, ctx.settings?.salaryPayDelayDays ?? 0)),
     status: c.record?.status ?? "preview", // preview (not saved) | draft | finalized | paid
     frozen: c.frozen,
     breakdown: {
@@ -79,7 +82,14 @@ export async function GET(req: Request) {
       leaveDays: s.leaveDays,
       unapprovedLeaveCount: s.unapprovedOccurrences.length,
       attendanceSalary: r.attendanceSalary,
-      lateDeduction: r.lateDeduction,
+      // per-late deduction plus the "every N late marks" penalty
+      lateDeduction: Math.round((r.lateDeduction + r.lateMarksDeduction) * 100) / 100,
+      earlyLeaveDays: s.earlyLeaveDays ?? 0,
+      earlyLeaveDeduction: r.earlyLeaveDeduction,
+      overtimeMinutes: s.overtimeMinutes ?? 0,
+      overtimePay: r.overtimePay,
+      additions: c.additions,
+      additionsTotal: r.additionsTotal,
       halfDayDeduction: r.halfDayDeduction,
       leaveDeduction: r.leaveDeduction,
       otherDeductions: c.otherDeductions,
@@ -103,6 +113,8 @@ export async function GET(req: Request) {
       id: h.id,
       month: h.month,
       year: h.year,
+      periodStart: h.periodStart ? dateKey(h.periodStart) : null,
+      periodEnd: h.periodEnd ? dateKey(h.periodEnd) : null,
       basicSalary: h.basicSalary,
       attendanceSalary: h.attendanceSalary,
       totalDeductions: h.totalDeductions,
@@ -120,6 +132,7 @@ export async function POST(req: Request) {
   if (ctx.user.role !== "company_admin") return NextResponse.json({ error: "Only company admins can run payroll." }, { status: 403 });
   const companyId = ctx.company!.id;
   const tz = ctx.settings?.timezone ?? "UTC";
+  const cycleStartDay = ctx.settings?.salaryCycleStartDay ?? 1;
 
   let body: Record<string, unknown>;
   try {
@@ -128,12 +141,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
   const action = String(body.action || "");
-  const { year, month } = parseMonth(typeof body.month === "string" ? body.month : null, tz);
+  const { year, month } = parseMonth(typeof body.month === "string" ? body.month : null, tz, cycleStartDay);
   const employeeId = typeof body.employeeId === "string" ? body.employeeId : "";
 
+  // A cycle can only be finalized after its last day has passed (honours custom salary cycles).
   const monthEnded = () => {
     const today = localWorkDate(new Date(), tz).getTime();
-    return today >= Date.UTC(year, month, 1);
+    const endOfCycle = cyclePeriod(year, month, cycleStartDay).end.getTime();
+    return today > endOfCycle;
   };
 
   try {
@@ -143,7 +158,7 @@ export async function POST(req: Request) {
     }
 
     if (action === "finalize_all") {
-      if (!monthEnded()) return NextResponse.json({ error: "This month has not ended yet." }, { status: 400 });
+      if (!monthEnded()) return NextResponse.json({ error: "This salary cycle has not ended yet." }, { status: 400 });
       const emps = await db
         .select()
         .from(employees)
@@ -168,7 +183,7 @@ export async function POST(req: Request) {
     }
 
     if (action === "finalize") {
-      if (!monthEnded()) return NextResponse.json({ error: "This month has not ended yet." }, { status: 400 });
+      if (!monthEnded()) return NextResponse.json({ error: "This salary cycle has not ended yet." }, { status: 400 });
       const rec = await finalizeMonth(companyId, employeeId, year, month, ctx.user.id);
       return NextResponse.json({ ok: true, status: rec.status });
     }
@@ -187,10 +202,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true });
     }
 
-    if (action === "add_deduction" || action === "remove_deduction") {
+    if (["add_deduction", "remove_deduction", "add_addition", "remove_addition"].includes(action)) {
+      const isAddition = action.endsWith("_addition");
+      const adding = action.startsWith("add_");
       const draft = await saveDraft(companyId, employeeId, year, month); // throws if frozen
-      const list = [...((draft.otherDeductions ?? []) as { label: string; amount: number }[])];
-      if (action === "add_deduction") {
+      const list = [...(((isAddition ? draft.additions : draft.otherDeductions) ?? []) as { label: string; amount: number }[])];
+      if (adding) {
         const label = String(body.label || "").trim().slice(0, 100);
         const amount = Number(body.amount);
         if (!label || !Number.isFinite(amount) || amount <= 0) {
@@ -199,12 +216,15 @@ export async function POST(req: Request) {
         list.push({ label, amount: Math.round(amount * 100) / 100 });
       } else {
         const idx = Number(body.index);
-        if (!Number.isInteger(idx) || idx < 0 || idx >= list.length) return NextResponse.json({ error: "Deduction not found." }, { status: 404 });
+        if (!Number.isInteger(idx) || idx < 0 || idx >= list.length) return NextResponse.json({ error: "Entry not found." }, { status: 404 });
         list.splice(idx, 1);
       }
-      await db.update(salaryRecords).set({ otherDeductions: list }).where(eq(salaryRecords.id, draft.id));
+      await db
+        .update(salaryRecords)
+        .set(isAddition ? { additions: list } : { otherDeductions: list })
+        .where(eq(salaryRecords.id, draft.id));
       await saveDraft(companyId, employeeId, year, month); // refresh totals
-      await db.insert(auditLogs).values({ companyId, actorId: ctx.user.id, action: `salary.${action}`, entity: "salary", entityId: draft.id, details: { employeeId, year, month, deductions: list } });
+      await db.insert(auditLogs).values({ companyId, actorId: ctx.user.id, action: `salary.${action}`, entity: "salary", entityId: draft.id, details: { employeeId, year, month, list } });
       return NextResponse.json({ ok: true });
     }
 

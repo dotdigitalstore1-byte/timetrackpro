@@ -62,6 +62,14 @@ interface SetupItem {
   employeeCount: number;
 }
 
+interface RulesSummary {
+  graceMinutes: number;
+  lateThresholdMinutes: number;
+  salaryCycleStartDay: number;
+  overtimeEnabled: boolean;
+  lateMarksLimit: number;
+}
+
 interface StatsData {
   today: {
     date: string;
@@ -217,6 +225,13 @@ function EmployeeDashboard() {
             <h3 className="mb-2 font-bold text-slate-900">My Work</h3>
             <div className="space-y-3 text-sm">
               <div>
+                <p className="text-xs text-slate-400">My shift</p>
+                <p className="font-semibold text-slate-700">
+                  {me?.employee?.shiftStart && me.employee.shiftEnd ? `${me.employee.shiftStart} – ${me.employee.shiftEnd}` : "—"}
+                  {me?.settings && me.settings.graceMinutes > 0 ? ` · ${me.settings.graceMinutes} min cool-off` : ""}
+                </p>
+              </div>
+              <div>
                 <p className="text-xs text-slate-400">Departments</p>
                 <p className="font-semibold text-slate-700">{me?.employee?.departments.map((d) => d.name).join(", ") || "—"}</p>
               </div>
@@ -286,6 +301,7 @@ function AdminDashboard({ role }: { role: string }) {
   const [leaves, setLeaves] = useState<LeaveRow[]>([]);
   const [departments, setDepartments] = useState<SetupItem[] | null>(null);
   const [locations, setLocations] = useState<SetupItem[] | null>(null);
+  const [rules, setRules] = useState<RulesSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [processing, setProcessing] = useState("");
@@ -294,16 +310,18 @@ function AdminDashboard({ role }: { role: string }) {
     setError("");
     try {
       // Departments / locations are a secondary panel: if they fail the rest of the dashboard still renders.
-      const [s, lv, dept, loc] = await Promise.all([
+      const [s, lv, dept, loc, st] = await Promise.all([
         api<StatsData>("/api/admin/stats"),
         api<{ leaves: LeaveRow[] }>("/api/leaves"),
         isAdmin ? api<{ departments: SetupItem[] }>("/api/departments").catch(() => null) : Promise.resolve(null),
         isAdmin ? api<{ locations: SetupItem[] }>("/api/locations").catch(() => null) : Promise.resolve(null),
+        isAdmin ? api<{ settings: RulesSummary | null }>("/api/settings").catch(() => null) : Promise.resolve(null),
       ]);
       setStats(s);
       setLeaves(lv.leaves);
       setDepartments(dept ? dept.departments : null);
       setLocations(loc ? loc.locations : null);
+      setRules(st?.settings ?? null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load the dashboard");
     } finally {
@@ -343,14 +361,14 @@ function AdminDashboard({ role }: { role: string }) {
 
       {error && <ErrorBanner message={error} onRetry={load} />}
 
-      {isAdmin && (departments || locations) && (
+      {isAdmin && (departments || locations || rules) && (
         <div className="mb-4">
           {((departments && departments.length === 0) || (locations && locations.length === 0)) && (
             <p className="mb-3 rounded-xl bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
               Finish setting up your company: add at least one department and one work location before adding employees.
             </p>
           )}
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <SetupCard
               title="Departments"
               noun="department"
@@ -365,6 +383,7 @@ function AdminDashboard({ role }: { role: string }) {
               href="/locations"
               addLabel="+ Add location"
             />
+            <RulesCard rules={rules} />
           </div>
         </div>
       )}
@@ -482,6 +501,36 @@ function SetupCard({
         <Link href={href} className="mt-3 inline-block text-xs font-semibold text-indigo-600 hover:underline">
           {addLabel} →
         </Link>
+      )}
+    </Card>
+  );
+}
+
+
+function RulesCard({ rules }: { rules: RulesSummary | null }) {
+  const cycle =
+    !rules || rules.salaryCycleStartDay <= 1
+      ? "Calendar-month salary cycle"
+      : `Salary cycle: day ${rules.salaryCycleStartDay} → ${rules.salaryCycleStartDay - 1}`;
+  return (
+    <Card className="p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="font-bold text-slate-900">Rules</h3>
+          <p className="text-xs text-slate-500">{rules ? "Attendance, deductions & salary cycle" : "Could not load"}</p>
+        </div>
+        <Link href="/rules">
+          <Button size="sm">Manage</Button>
+        </Link>
+      </div>
+      {rules && (
+        <ul className="mt-3 space-y-1 text-xs text-slate-600">
+          <li>{rules.graceMinutes}-minute cool-off · half day after {rules.lateThresholdMinutes} min late</li>
+          <li>{cycle}</li>
+          <li>
+            Overtime {rules.overtimeEnabled ? "on" : "off"} · late-marks rule {rules.lateMarksLimit > 0 ? `every ${rules.lateMarksLimit}` : "off"}
+          </li>
+        </ul>
       )}
     </Card>
   );
