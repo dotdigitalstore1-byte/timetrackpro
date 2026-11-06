@@ -233,6 +233,7 @@ export interface MonthSummary {
   unapprovedOccurrences: Date[]; // first day of each consecutive absent block
   earlyLeaveDays?: number; // full days where the employee left early beyond the grace
   overtimeMinutes?: number; // payable overtime minutes (after min threshold and daily cap)
+  weekOffWorkedDays?: number; // days worked on a weekly off (Sunday, etc.): each earns one comp-off
 }
 
 /**
@@ -261,6 +262,7 @@ export function summarizeMonth(args: {
     unapprovedOccurrences: [],
     earlyLeaveDays: 0,
     overtimeMinutes: 0,
+    weekOffWorkedDays: 0,
   };
   let inBlock = false;
   const rules = args.rules;
@@ -300,6 +302,14 @@ export function summarizeMonth(args: {
       inBlock = true;
     }
   }
+
+  // Work done on a weekly off (Sunday by default) earns one comp-off credit per day.
+  for (let t = period.start.getTime(); t <= period.end.getTime(); t += 86400000) {
+    const d = new Date(t);
+    if (!args.weeklyOff.has(d.getUTCDay())) continue;
+    if (args.joinDate && d.getTime() < args.joinDate.getTime()) continue;
+    if (args.records.get(dateKey(d))?.hasPunchIn) out.weekOffWorkedDays = (out.weekOffWorkedDays ?? 0) + 1;
+  }
   return out;
 }
 
@@ -310,13 +320,16 @@ export interface DeductionRule {
   value: number;
 }
 
+/** Every month is treated as this many days, so the daily rate never depends on the calendar. */
+export const SALARY_BASE_DAYS = 30;
+
 export interface SalaryInput {
   basicSalary: number;
-  workDaysPerMonth: number; // divisor for the daily rate
+  workDaysPerMonth: number; // divisor for the daily rate; the standard is SALARY_BASE_DAYS (30)
   summary: MonthSummary;
   lateRule: DeductionRule; // per late day
   halfDayRule: DeductionRule; // per half day
-  leaveRule: DeductionRule; // per approved leave day
+  leaveRule: DeductionRule; // per UNPAID approved leave day (leave covered by comp-off is not deducted)
   holdDaysPerOccurrence: number;
   releasedHoldCount: number; // occurrences whose hold has been released
   otherDeductions: { label: string; amount: number }[];
@@ -326,6 +339,7 @@ export interface SalaryInput {
   overtime?: { rate: number }; // pay multiplier, e.g. 1.5
   shiftHours?: number; // employee's shift length, for the hourly rate
   additions?: { label: string; amount: number }[]; // bonuses / allowances for this cycle
+  extraPay?: { enabled: boolean; rate: number }; // pay for comp-off nobody used by the end of the cycle
 }
 
 export interface SalaryResult {
@@ -344,6 +358,13 @@ export interface SalaryResult {
   holdAmount: number; // ACTIVE hold amount (temporary, releasable)
   netBeforeHold: number;
   netPayable: number; // payable now = net before hold - active holds
+  // --- weekly-off work and comp-off
+  weekOffWorkedDays: number; // days worked on a weekly off; each earns one comp-off
+  compOffUsed: number; // approved leave days covered by comp-off in this cycle (paid, not deducted)
+  compOffUnused: number; // comp-off left when the cycle ends
+  unpaidLeaveDays: number; // approved leave days still deducted
+  extraPayDays: number; // unused comp-off that is paid as extra pay
+  extraPay: number;
 }
 
 const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
@@ -353,7 +374,8 @@ function perUnit(rule: DeductionRule, dailyRate: number): number {
 }
 
 export function computeSalary(i: SalaryInput): SalaryResult {
-  const dailyRate = i.workDaysPerMonth > 0 ? i.basicSalary / i.workDaysPerMonth : 0;
+  const divisor = i.workDaysPerMonth > 0 ? i.workDaysPerMonth : SALARY_BASE_DAYS;
+  const dailyRate = i.basicSalary / divisor;
   const s = i.summary;
 
   const attendanceSalary = Math.max(0, i.basicSalary - s.absentDays * dailyRate);
@@ -366,8 +388,18 @@ export function computeSalary(i: SalaryInput): SalaryResult {
   const hourlyRate = dailyRate / (i.shiftHours && i.shiftHours > 0 ? i.shiftHours : 8);
   const overtimePay = i.overtime ? ((s.overtimeMinutes ?? 0) / 60) * hourlyRate * i.overtime.rate : 0;
   const additionsTotal = (i.additions ?? []).reduce((t, a) => t + Number(a.amount || 0), 0);
+
+  // Comp-off: each day worked on a weekly off earns one day that must be used in the same cycle.
+  // Approved leave in the cycle is covered by comp-off first (those days are paid); only the rest is deducted.
+  const weekOffWorkedDays = s.weekOffWorkedDays ?? 0;
+  const compOffUsed = Math.min(s.leaveDays, weekOffWorkedDays);
+  const compOffUnused = weekOffWorkedDays - compOffUsed;
+  const unpaidLeaveDays = s.leaveDays - compOffUsed;
+  const extraPayDays = i.extraPay?.enabled ? compOffUnused : 0;
+  const extraPay = extraPayDays * dailyRate * (i.extraPay?.rate ?? 1);
+
   const halfDayDeduction = s.halfDays * perUnit(i.halfDayRule, dailyRate);
-  const leaveDeduction = s.leaveDays * perUnit(i.leaveRule, dailyRate);
+  const leaveDeduction = unpaidLeaveDays * perUnit(i.leaveRule, dailyRate);
   const otherTotal = i.otherDeductions.reduce((t, d) => t + Number(d.amount || 0), 0);
   const totalDeductions =
     lateDeduction + lateMarksDeduction + earlyLeaveDeduction + halfDayDeduction + leaveDeduction + otherTotal;
@@ -376,7 +408,7 @@ export function computeSalary(i: SalaryInput): SalaryResult {
   const holdDays = activeOccurrences * i.holdDaysPerOccurrence;
   const holdAmount = holdDays * dailyRate;
 
-  const netBeforeHold = Math.max(0, attendanceSalary + overtimePay + additionsTotal - totalDeductions);
+  const netBeforeHold = Math.max(0, attendanceSalary + overtimePay + additionsTotal + extraPay - totalDeductions);
   const netPayable = Math.max(0, netBeforeHold - holdAmount);
 
   return {
@@ -395,5 +427,11 @@ export function computeSalary(i: SalaryInput): SalaryResult {
     holdAmount: r2(holdAmount),
     netBeforeHold: r2(netBeforeHold),
     netPayable: r2(netPayable),
+    weekOffWorkedDays,
+    compOffUsed,
+    compOffUnused,
+    unpaidLeaveDays,
+    extraPayDays,
+    extraPay: r2(extraPay),
   };
 }

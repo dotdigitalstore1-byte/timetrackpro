@@ -52,7 +52,6 @@ export async function POST(req: Request) {
     if (s.leaveDeductionType !== undefined) update.leaveDeductionType = s.leaveDeductionType === "fixed" ? "fixed" : "percentage";
     if (s.leaveDeductionValue !== undefined) update.leaveDeductionValue = String(Math.max(0, numField(s.leaveDeductionValue, 100)));
     if (s.unapprovedHoldDays !== undefined) update.unapprovedHoldDays = clampInt(s.unapprovedHoldDays, 0, 30, 2);
-    if (s.workDaysPerMonth !== undefined) update.workDaysPerMonth = clampInt(s.workDaysPerMonth, 1, 31, 26);
     if (s.currency !== undefined && String(s.currency).trim()) update.currency = String(s.currency).trim().slice(0, 10);
     if (s.approvalLevels !== undefined) update.approvalLevels = s.approvalLevels === 2 ? 2 : 1;
     if (s.timezone !== undefined) {
@@ -82,7 +81,9 @@ export async function POST(req: Request) {
     // ---- Salary cycle
     if (s.salaryCycleStartDay !== undefined) update.salaryCycleStartDay = clampInt(s.salaryCycleStartDay, 1, 28, 1);
     if (s.salaryPayDelayDays !== undefined) update.salaryPayDelayDays = clampInt(s.salaryPayDelayDays, 0, 60, 5);
-    if (s.dailyRateBasis !== undefined) update.dailyRateBasis = s.dailyRateBasis === "cycle" ? "cycle" : "fixed";
+    // ---- Weekly-off work & comp-off
+    if (typeof s.extraPayEnabled === "boolean") update.extraPayEnabled = s.extraPayEnabled;
+    if (s.extraPayRate !== undefined) update.extraPayRate = String(clampNum(s.extraPayRate, 0, 5, 1));
 
     const hhmm = /^([01]\d|2[0-3]):[0-5]\d$/;
     if (typeof update.shiftStart === "string" && !hhmm.test(update.shiftStart)) return NextResponse.json({ error: "Shift start must be HH:MM (24h)." }, { status: 400 });

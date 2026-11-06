@@ -106,7 +106,11 @@ export const companySettings = pgTable("company_settings", {
   // ---- Salary cycle
   salaryCycleStartDay: integer("salary_cycle_start_day").notNull().default(1), // 1 = calendar month; 26 = 26th -> 25th
   salaryPayDelayDays: integer("salary_pay_delay_days").notNull().default(5), // pay date = cycle end + N days
-  dailyRateBasis: varchar("daily_rate_basis", { length: 10 }).notNull().default("fixed"), // fixed | cycle
+  dailyRateBasis: varchar("daily_rate_basis", { length: 10 }).notNull().default("fixed"), // legacy: salaries now always use a 30-day month
+
+  // ---- Weekly-off work & comp-off (Extra pay is OFF by default)
+  extraPayEnabled: boolean("extra_pay_enabled").notNull().default(false), // pay unused comp-off at cycle end
+  extraPayRate: numeric("extra_pay_rate", { precision: 4, scale: 2 }).notNull().default("1"), // × daily rate per day
 
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -346,6 +350,12 @@ export const salaryRecords = pgTable(
   earlyLeaveDeduction: numeric("early_leave_deduction", { precision: 12, scale: 2 }).notNull().default("0"),
   overtimeMinutes: integer("overtime_minutes").notNull().default(0),
   overtimePay: numeric("overtime_pay", { precision: 12, scale: 2 }).notNull().default("0"),
+  // weekly-off work and comp-off for this cycle
+  weekOffWorkedDays: integer("week_off_worked_days").notNull().default(0),
+  compOffUsed: integer("comp_off_used").notNull().default(0), // leave days covered by comp-off
+  compOffUnused: integer("comp_off_unused").notNull().default(0), // comp-off left at cycle end
+  extraPayDays: integer("extra_pay_days").notNull().default(0),
+  extraPayAmount: numeric("extra_pay_amount", { precision: 12, scale: 2 }).notNull().default("0"),
   // the exact pay period this record covers (kept so history stays right if the cycle setting changes later)
   periodStart: timestamp("period_start", { withTimezone: true }),
   periodEnd: timestamp("period_end", { withTimezone: true }),

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { api, useMe } from "@/lib/client";
 import { Button, Card, EmptyState, ErrorBanner, Input, PageHeader, Select, Spinner } from "@/components/ui";
 import { addDays, cyclePeriod, currentCycleKey, dateKey } from "@/lib/payroll";
-import { formatDayKey } from "@/lib/utils";
+import { formatDayKey, formatNumber } from "@/lib/utils";
 
 // Everything is held as strings while editing so half-typed numbers never turn into NaN.
 const FIELDS = [
@@ -15,15 +15,22 @@ const FIELDS = [
   "earlyLeaveGraceMinutes", "earlyLeaveHalfDayMinutes", "earlyLeaveDeductionType", "earlyLeaveDeductionValue",
   "halfDayDeductionType", "halfDayDeductionValue", "leaveDeductionType", "leaveDeductionValue", "unapprovedHoldDays",
   "overtimeMinMinutes", "overtimeRate", "overtimeMaxMinutesPerDay",
-  "salaryCycleStartDay", "salaryPayDelayDays", "dailyRateBasis", "workDaysPerMonth",
+  "extraPayRate",
+  "salaryCycleStartDay", "salaryPayDelayDays",
 ] as const;
 
-type Form = Record<(typeof FIELDS)[number], string> & { overtimeEnabled: boolean };
+type Form = Record<(typeof FIELDS)[number], string> & { overtimeEnabled: boolean; extraPayEnabled: boolean };
 
 const DEDUCTION_TYPES = [
   { value: "percentage", label: "% of daily rate" },
   { value: "fixed", label: "Fixed amount" },
 ];
+
+/** Salaries are always worked out on this many days, so the daily rate is basic ÷ 30 in every month. */
+const SALARY_BASE_DAYS = 30;
+/** A cycle can start on any day from 1 to 28 (every month has those days, so cycles never skip or overlap). */
+const MIN_START_DAY = 1;
+const MAX_START_DAY = 28;
 
 function toTime(minutes: number): string {
   const m = ((Math.round(minutes) % 1440) + 1440) % 1440;
@@ -39,6 +46,10 @@ function ordinal(n: number): string {
   return `${n}${suffix}`;
 }
 const num = (v: string) => (v.trim() === "" || Number.isNaN(Number(v)) ? 0 : Number(v));
+const isValidStartDay = (v: string) => {
+  const n = Number(v);
+  return v.trim() !== "" && Number.isInteger(n) && n >= MIN_START_DAY && n <= MAX_START_DAY;
+};
 
 function Section({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
   return (
@@ -53,6 +64,23 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
 
 function Example({ children }: { children: ReactNode }) {
   return <div className="mt-3 rounded-xl bg-indigo-50 px-3 py-2.5 text-xs leading-relaxed text-indigo-900">{children}</div>;
+}
+
+function Toggle({ label, on, onToggle }: { label: string; on: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      onClick={onToggle}
+      className={`mb-3 flex min-h-11 w-full items-center justify-between rounded-xl border px-3.5 py-2 text-sm font-semibold ${on ? "border-indigo-600 bg-indigo-50 text-indigo-700" : "border-slate-300 bg-white text-slate-600"}`}
+    >
+      <span>{label}</span>
+      <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${on ? "bg-indigo-600 text-white" : "bg-slate-200 text-slate-500"}`}>
+        {on ? "ON" : "OFF"}
+      </span>
+    </button>
+  );
 }
 
 export default function RulesPage() {
@@ -76,7 +104,7 @@ export default function RulesPage() {
       if (!s) throw new Error("Company settings are not available.");
       const f: Record<string, string> = {};
       for (const k of FIELDS) f[k] = String(s[k] ?? "");
-      setForm({ ...(f as Form), overtimeEnabled: !!s.overtimeEnabled });
+      setForm({ ...(f as Form), overtimeEnabled: !!s.overtimeEnabled, extraPayEnabled: !!s.extraPayEnabled });
       setSavedStartDay(String(s.salaryCycleStartDay ?? "1"));
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Could not load rules");
@@ -94,14 +122,21 @@ export default function RulesPage() {
 
   const save = async () => {
     if (!form) return;
+    if (!isValidStartDay(form.salaryCycleStartDay)) {
+      setError(`The salary cycle must start on a day from ${MIN_START_DAY} to ${MAX_START_DAY}.`);
+      return;
+    }
     setSaving(true);
     setMessage("");
     setError("");
     try {
-      const settings: Record<string, unknown> = { overtimeEnabled: form.overtimeEnabled };
+      const settings: Record<string, unknown> = {
+        overtimeEnabled: form.overtimeEnabled,
+        extraPayEnabled: form.extraPayEnabled,
+      };
       for (const k of FIELDS) {
         if (k === "shiftStart" || k === "shiftEnd") continue; // default shift lives on the Settings page
-        const text = k.endsWith("Type") || k === "dailyRateBasis";
+        const text = k.endsWith("Type");
         settings[k] = text ? form[k] : num(form[k]);
       }
       await api("/api/settings", { method: "POST", body: JSON.stringify({ settings }) });
@@ -123,10 +158,12 @@ export default function RulesPage() {
     const late = num(form.lateThresholdMinutes);
     const eGrace = num(form.earlyLeaveGraceMinutes);
     const eHalf = num(form.earlyLeaveHalfDayMinutes);
-    const sd = num(form.salaryCycleStartDay) || 1;
+    const sd = isValidStartDay(form.salaryCycleStartDay) ? num(form.salaryCycleStartDay) : 1;
     const today = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate()));
     const key = currentCycleKey(today, sd);
     const period = cyclePeriod(key.year, key.month, sd);
+    const nextKey = currentCycleKey(addDays(period.end, 1), sd);
+    const nextPeriod = cyclePeriod(nextKey.year, nextKey.month, sd);
     return {
       onTimeUntil: toTime(start + grace),
       lateFrom: toTime(start + grace + 1),
@@ -137,8 +174,11 @@ export default function RulesPage() {
       earlyOkFrom: toTime(end - eGrace),
       earlyHalfBefore: toTime(end - eHalf),
       eHalf,
+      sd,
       periodStart: dateKey(period.start),
       periodEnd: dateKey(period.end),
+      nextStart: dateKey(nextPeriod.start),
+      nextEnd: dateKey(nextPeriod.end),
       payDate: dateKey(addDays(period.end, num(form.salaryPayDelayDays))),
     };
   }, [form]);
@@ -154,13 +194,10 @@ export default function RulesPage() {
     );
   }
 
-  const startDayOptions = Array.from({ length: 28 }, (_, i) => {
-    const d = i + 1;
-    return {
-      value: String(d),
-      label: d === 1 ? "1st to month end (calendar month)" : `${ordinal(d)} to ${ordinal(d - 1)} of next month`,
-    };
-  });
+  const startDayValid = isValidStartDay(form.salaryCycleStartDay);
+  const cycleLabel = (d: number) => (d === 1 ? "Calendar month (1st → month end)" : `${ordinal(d)} → ${ordinal(d - 1)}`);
+  const presetDays = [1, 6, 11, 16, 21, 26];
+  const dailyExample = 30000 / SALARY_BASE_DAYS; // illustration only
 
   return (
     <div>
@@ -215,35 +252,9 @@ export default function RulesPage() {
               The deduction is <b>0 by default</b>, so set an amount if you want early leave to cost salary.
             </Example>
           </Section>
-        </div>
-
-        <div className="space-y-4">
-          <Section title="Half-day, leave &amp; unapproved absence">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Select label="Half-day deduction type" value={form.halfDayDeductionType} onChange={(v) => set({ halfDayDeductionType: v })} options={DEDUCTION_TYPES} />
-              <Input label={form.halfDayDeductionType === "fixed" ? `Half-day deduction (${currency})` : "Half-day deduction (%)"} type="number" value={form.halfDayDeductionValue} onChange={(v) => set({ halfDayDeductionValue: v })} />
-              <Select label="Approved-leave deduction type" value={form.leaveDeductionType} onChange={(v) => set({ leaveDeductionType: v })} options={DEDUCTION_TYPES} />
-              <Input label={form.leaveDeductionType === "fixed" ? `Leave deduction (${currency})` : "Leave deduction (%)"} type="number" value={form.leaveDeductionValue} onChange={(v) => set({ leaveDeductionValue: v })} />
-              <Input label="Unapproved-absence hold (days per occurrence)" type="number" value={form.unapprovedHoldDays} onChange={(v) => set({ unapprovedHoldDays: v })} />
-            </div>
-            <p className="mt-2 text-[11px] text-slate-400">
-              Unapproved absences are unpaid days, plus a temporary hold that an admin can release.
-            </p>
-          </Section>
 
           <Section title="Overtime" hint="Pay extra for time worked after the shift ends.">
-            <button
-              type="button"
-              role="switch"
-              aria-checked={form.overtimeEnabled}
-              onClick={() => set({ overtimeEnabled: !form.overtimeEnabled })}
-              className={`mb-3 flex min-h-11 w-full items-center justify-between rounded-xl border px-3.5 py-2 text-sm font-semibold ${form.overtimeEnabled ? "border-indigo-600 bg-indigo-50 text-indigo-700" : "border-slate-300 bg-white text-slate-600"}`}
-            >
-              <span>Pay overtime</span>
-              <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${form.overtimeEnabled ? "bg-indigo-600 text-white" : "bg-slate-200 text-slate-500"}`}>
-                {form.overtimeEnabled ? "ON" : "OFF"}
-              </span>
-            </button>
+            <Toggle label="Pay overtime" on={form.overtimeEnabled} onToggle={() => set({ overtimeEnabled: !form.overtimeEnabled })} />
             {form.overtimeEnabled && (
               <>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -258,34 +269,100 @@ export default function RulesPage() {
               </>
             )}
           </Section>
+        </div>
 
-          <Section title="Salary cycle" hint="The period each salary covers and when it is paid.">
+        <div className="space-y-4">
+          <Section title="Half-day, leave &amp; unapproved absence">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Select label="Cycle runs" value={form.salaryCycleStartDay} onChange={(v) => set({ salaryCycleStartDay: v })} options={startDayOptions} />
-              <Input label="Pay salary … days after cycle ends" type="number" value={form.salaryPayDelayDays} onChange={(v) => set({ salaryPayDelayDays: v })} />
-              <Select
-                label="Daily rate is"
-                value={form.dailyRateBasis}
-                onChange={(v) => set({ dailyRateBasis: v })}
-                options={[
-                  { value: "fixed", label: "Salary ÷ fixed work days" },
-                  { value: "cycle", label: "Salary ÷ actual working days in cycle" },
-                ]}
-              />
-              {form.dailyRateBasis === "fixed" && (
-                <Input label="Fixed work days per cycle" type="number" value={form.workDaysPerMonth} onChange={(v) => set({ workDaysPerMonth: v })} />
-              )}
+              <Select label="Half-day deduction type" value={form.halfDayDeductionType} onChange={(v) => set({ halfDayDeductionType: v })} options={DEDUCTION_TYPES} />
+              <Input label={form.halfDayDeductionType === "fixed" ? `Half-day deduction (${currency})` : "Half-day deduction (%)"} type="number" value={form.halfDayDeductionValue} onChange={(v) => set({ halfDayDeductionValue: v })} />
+              <Select label="Approved-leave deduction type" value={form.leaveDeductionType} onChange={(v) => set({ leaveDeductionType: v })} options={DEDUCTION_TYPES} />
+              <Input label={form.leaveDeductionType === "fixed" ? `Leave deduction (${currency})` : "Leave deduction (%)"} type="number" value={form.leaveDeductionValue} onChange={(v) => set({ leaveDeductionValue: v })} />
+              <Input label="Unapproved-absence hold (days per occurrence)" type="number" value={form.unapprovedHoldDays} onChange={(v) => set({ unapprovedHoldDays: v })} />
             </div>
-            {form.salaryCycleStartDay !== savedStartDay && (
+            <p className="mt-2 text-[11px] leading-relaxed text-slate-400">
+              Unapproved absences are unpaid days, plus a temporary hold that an admin can release. Approved leave is deducted at the
+              leave rate above, but only the days not covered by comp-off (see below).
+            </p>
+          </Section>
+
+          <Section title="Salary base: fixed 30-day month" hint="The salary never changes with the calendar. Every month is divided by 30.">
+            <Example>
+              For example, a basic salary of <b>{currency}30,000</b> gives a daily rate of <b>{currency}{formatNumber(dailyExample, 0)}</b> in every cycle,
+              whether it has 28, 30 or 31 days. Sundays and holidays are already part of the 30 paid days, so they are never deducted.
+              Each unpaid day costs one daily rate, and a 2-day unpaid leave costs <b>{currency}{formatNumber(dailyExample * 2, 0)}</b>.
+            </Example>
+          </Section>
+
+          <Section title="Weekly-off work &amp; comp-off" hint="Working on a weekly off (Sunday by default) earns one comp-off day, which must be used in the same salary cycle.">
+            <Example>
+              <b>Leave compensation:</b> a Sunday worked in the same cycle as a leave pays for that leave, so the leave day is paid instead of deducted.
+              It works the same way whether the Sunday comes before or after the leave.
+              <br />
+              <b>Lapsing:</b> comp-off that is not used by the last day of the cycle lapses, unless Extra pay is switched on below.
+            </Example>
+            <div className="mt-3">
+              <Toggle
+                label="Extra pay for unused comp-off"
+                on={form.extraPayEnabled}
+                onToggle={() => set({ extraPayEnabled: !form.extraPayEnabled })}
+              />
+              {form.extraPayEnabled ? (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <Input label="Extra pay per unused day (× daily rate)" type="number" step="0.25" value={form.extraPayRate} onChange={(v) => set({ extraPayRate: v })} />
+                </div>
+              ) : null}
+            </div>
+            <Example>
+              For example: an employee works <b>2 Sundays</b> and takes <b>1 leave</b> in the same cycle. The leave is paid by one Sunday.
+              The other Sunday is unused comp-off:{" "}
+              {form.extraPayEnabled ? (
+                <>paid as extra pay, <b>+{currency}{formatNumber(dailyExample * num(form.extraPayRate), 0)}</b> on a {currency}30,000 salary.</>
+              ) : (
+                <>it lapses with no pay.</>
+              )}
+            </Example>
+          </Section>
+
+          <Section title="Salary cycle" hint="The period each salary covers, and when it is paid.">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Input
+                label={`Cycle starts on day (${MIN_START_DAY}–${MAX_START_DAY})`}
+                type="number"
+                value={form.salaryCycleStartDay}
+                onChange={(v) => set({ salaryCycleStartDay: v })}
+              />
+              <Input label="Pay salary … days after cycle ends" type="number" value={form.salaryPayDelayDays} onChange={(v) => set({ salaryPayDelayDays: v })} />
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {presetDays.map((d) => (
+                <Button
+                  key={d}
+                  size="sm"
+                  variant={num(form.salaryCycleStartDay) === d ? "primary" : "secondary"}
+                  onClick={() => set({ salaryCycleStartDay: String(d) })}
+                >
+                  {cycleLabel(d)}
+                </Button>
+              ))}
+            </div>
+            {!startDayValid && (
+              <p className="mt-3 rounded-xl bg-rose-50 px-3 py-2.5 text-xs font-medium text-rose-700">
+                Enter a whole day from {MIN_START_DAY} to {MAX_START_DAY}. Days 29 to 31 are not offered because they do not exist in every month.
+              </p>
+            )}
+            {form.salaryCycleStartDay !== savedStartDay && startDayValid && (
               <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2.5 text-xs font-medium text-amber-800">
                 Changing the cycle: salaries you already finalized keep their original dates, but any cycle not yet finalized is recalculated with the new dates.
                 To avoid overlapping or skipped days, change this right after you finalize a cycle.
               </p>
             )}
             <Example>
-              Current cycle: <b>{formatDayKey(example.periodStart)} – {formatDayKey(example.periodEnd)}</b> · pay date <b>{formatDayKey(example.payDate)}</b>.
-              A cycle is named after the month it ends in, and can only be finalized after its last day.
-              Salary is set per employee on the <Link href="/employees" className="font-bold underline">Employees</Link> page.
+              A cycle runs from its start day up to the day before the next one. Day 1 means the calendar month. Day 26 means
+              <b> 26th → 25th</b>.
+              Current cycle: <b>{formatDayKey(example.periodStart)} – {formatDayKey(example.periodEnd)}</b>, paid on <b>{formatDayKey(example.payDate)}</b>.
+              Next cycle: <b>{formatDayKey(example.nextStart)} – {formatDayKey(example.nextEnd)}</b>.
+              A cycle can only be finalized after its last day. Salary is set per employee on the <Link href="/employees" className="font-bold underline">Employees</Link> page.
             </Example>
           </Section>
         </div>

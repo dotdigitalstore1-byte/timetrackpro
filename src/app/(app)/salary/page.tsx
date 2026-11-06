@@ -28,6 +28,12 @@ interface SalaryData {
     earlyLeaveDeduction: number;
     overtimeMinutes: number;
     overtimePay: number;
+    weekOffWorkedDays: number;
+    compOffUsed: number;
+    compOffUnused: number;
+    unpaidLeaveDays: number;
+    extraPayDays: number;
+    extraPay: number;
     additions: { label: string; amount: number }[];
     additionsTotal: number;
     halfDayDeduction: number;
@@ -202,15 +208,31 @@ export default function SalaryPage() {
 
           <div className="grid gap-4 lg:grid-cols-2">
             <Card>
-              <h3 className="mb-3 font-bold text-slate-900">Earnings</h3>
+              <h3 className="mb-1 font-bold text-slate-900">Earnings</h3>
+              <p className="mb-3 text-xs leading-relaxed text-slate-500">
+                Every salary is worked out on a fixed 30-day month, so the daily rate is basic salary ÷ 30 in every month.
+                Sundays and holidays are paid days. Each unpaid day (an unapproved absence, or leave not covered by comp-off) costs one daily rate.
+              </p>
               <div className="space-y-2 text-sm">
                 <Row label="Monthly basic salary" value={`${currency}${formatNumber(b.basicSalary)}`} />
-                <Row label="Daily rate" value={`${currency}${formatNumber(b.dailyRate)}`} />
+                <Row label="Daily rate (basic ÷ 30)" value={`${currency}${formatNumber(b.dailyRate)}`} />
                 <Row label="Full days present (incl. late)" value={`${formatNumber(b.presentDays, 0)}`} />
                 <Row label="Unpaid unapproved absences" value={`${formatNumber(b.absentDays, 0)} day(s)`} />
                 <Row label="Attendance-based salary" value={`${currency}${formatNumber(b.attendanceSalary)}`} bold />
+                {b.weekOffWorkedDays > 0 && (
+                  <Row label="Weekly-off days worked (each earns 1 comp-off)" value={`${b.weekOffWorkedDays} day(s)`} />
+                )}
+                {b.compOffUsed > 0 && (
+                  <Row label="Comp-off used against leave (paid leave)" value={`${b.compOffUsed} day(s)`} />
+                )}
                 {(b.overtimePay > 0 || b.overtimeMinutes > 0) && (
                   <Row label={`Overtime (${formatNumber(b.overtimeMinutes / 60, 1)} h)`} value={`+${currency}${formatNumber(b.overtimePay)}`} />
+                )}
+                {b.extraPayDays > 0 && (
+                  <Row label={`Extra pay for unused comp-off (${b.extraPayDays} day(s))`} value={`+${currency}${formatNumber(b.extraPay)}`} />
+                )}
+                {b.compOffUnused > 0 && b.extraPayDays === 0 && (
+                  <Row label={`Unused comp-off lapsed at cycle end (${b.compOffUnused} day(s))`} value="No pay" />
                 )}
                 {b.additions.map((a, i) => (
                   <div key={i} className="flex items-center justify-between">
@@ -241,7 +263,7 @@ export default function SalaryPage() {
                   <Row label={`Early leave (${b.earlyLeaveDays} day(s))`} value={`-${currency}${formatNumber(b.earlyLeaveDeduction)}`} negative />
                 )}
                 <Row label={`Half-day (${b.halfDays} day(s))`} value={`-${currency}${formatNumber(b.halfDayDeduction)}`} negative />
-                <Row label={`Approved leave (${formatNumber(b.leaveDays, 0)} day(s))`} value={`-${currency}${formatNumber(b.leaveDeduction)}`} negative />
+                <Row label={`Approved leave (${formatNumber(b.unpaidLeaveDays, 0)} unpaid of ${formatNumber(b.leaveDays, 0)} day(s))`} value={`-${currency}${formatNumber(b.leaveDeduction)}`} negative />
                 {b.otherDeductions.map((d, i) => (
                   <div key={i} className="flex items-center justify-between">
                     <span className="text-slate-500">{d.label}</span>

@@ -17,7 +17,7 @@ import {
   cyclePeriod,
   dateKey,
   localWorkDate,
-  periodWorkdays,
+  SALARY_BASE_DAYS,
   shiftHours,
   summarizeMonth,
   type DayRecord,
@@ -154,14 +154,12 @@ export async function computeMonth(
   const holdDaysEach = settings.unapprovedHoldDays ?? 2;
   const basicSalary = record && record.status !== "draft" ? Number(record.basicSalary) : Number(emp.basicSalary);
 
-  // Daily rate divisor: a fixed "work days per month", or the real number of working days in this cycle.
-  const cycleWorkdays = periodWorkdays(period, weeklyOffOf(settings), holidays).length;
-  const workDays = settings.dailyRateBasis === "cycle" ? Math.max(1, cycleWorkdays) : settings.workDaysPerMonth;
+  // Standard month: the daily rate is always basic / 30, whatever the calendar length of the cycle.
   const shift = shiftOf(settings, emp);
 
   const result = computeSalary({
     basicSalary,
-    workDaysPerMonth: workDays,
+    workDaysPerMonth: SALARY_BASE_DAYS,
     summary,
     earlyLeaveRule: rule(settings.earlyLeaveDeductionType, settings.earlyLeaveDeductionValue),
     lateMarks: { limit: settings.lateMarksLimit, penaltyDays: Number(settings.lateMarksPenaltyDays) },
@@ -174,6 +172,7 @@ export async function computeMonth(
     holdDaysPerOccurrence: holdDaysEach,
     releasedHoldCount: releasedCount,
     otherDeductions,
+    extraPay: { enabled: !!settings.extraPayEnabled, rate: Number(settings.extraPayRate) || 1 },
   });
 
   // Finalized / paid months are frozen: show exactly what was stored at finalization.
@@ -198,6 +197,12 @@ export async function computeMonth(
       holdAmount: n(record.salaryHoldAmount),
       netBeforeHold: n(record.netPayable) + n(record.salaryHoldAmount),
       netPayable: n(record.netPayable),
+      weekOffWorkedDays: record.weekOffWorkedDays,
+      compOffUsed: record.compOffUsed,
+      compOffUnused: record.compOffUnused,
+      unpaidLeaveDays: Math.max(0, n(record.leaveDays) - record.compOffUsed),
+      extraPayDays: record.extraPayDays,
+      extraPay: n(record.extraPayAmount),
     };
     finalSummary = {
       ...summary,
@@ -247,6 +252,11 @@ export async function saveDraft(companyId: string, employeeId: string, year: num
     earlyLeaveDeduction: result.earlyLeaveDeduction.toFixed(2),
     overtimeMinutes: summary.overtimeMinutes ?? 0,
     overtimePay: result.overtimePay.toFixed(2),
+    weekOffWorkedDays: result.weekOffWorkedDays,
+    compOffUsed: result.compOffUsed,
+    compOffUnused: result.compOffUnused,
+    extraPayDays: result.extraPayDays,
+    extraPayAmount: result.extraPay.toFixed(2),
     periodStart: c.period.start,
     periodEnd: c.period.end,
     halfDayDeduction: result.halfDayDeduction.toFixed(2),
