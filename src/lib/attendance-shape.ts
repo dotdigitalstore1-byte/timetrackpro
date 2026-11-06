@@ -10,6 +10,7 @@ export function toClientRecord(r: AttendanceRecord) {
     punchOutTime: r.punchOutTime,
     hasPunchInPhoto: !!r.punchInPhoto,
     hasPunchOutPhoto: !!r.punchOutPhoto,
+    hasPunchOut: !!r.punchOutTime,
     status: r.status,
     isManual: r.isManual,
     note: r.note,

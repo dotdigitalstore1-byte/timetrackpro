@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, useMe } from "@/lib/client";
 import { Badge, Button, Card, EmptyState, Input, Modal, PageHeader, Select, Spinner } from "@/components/ui";
 import PunchCard from "@/components/PunchCard";
-import { formatDate, formatTime, workingHours } from "@/lib/utils";
+import { formatDate, formatDayKey, formatTime, workingHours } from "@/lib/utils";
 
 interface AttendanceRow {
   id: string;
@@ -71,10 +71,9 @@ export default function AttendancePage() {
   const isAdmin = me?.user.role === "company_admin";
   const isManager = me?.user.role === "manager";
 
-  const [month, setMonth] = useState(() => {
-    const n = new Date();
-    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}`;
-  });
+  // Empty = the current salary cycle (the server decides which cycle that is).
+  const [month, setMonth] = useState("");
+  const [period, setPeriod] = useState<{ start: string; end: string } | null>(null);
   const [employeeId, setEmployeeId] = useState("");
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [records, setRecords] = useState<AttendanceRow[]>([]);
@@ -86,10 +85,12 @@ export default function AttendancePage() {
     setLoading(true);
     setError("");
     try {
-      const qs = new URLSearchParams({ month });
+      const qs = new URLSearchParams();
+      if (month) qs.set("month", month);
       if (isAdmin && employeeId) qs.set("employeeId", employeeId);
-      const data = await api<{ records: AttendanceRow[] }>(`/api/attendance?${qs}`);
+      const data = await api<{ records: AttendanceRow[]; period?: { start: string; end: string } }>(`/api/attendance?${qs}`);
       setRecords(data.records);
+      setPeriod(data.period ?? null);
     } catch (e) {
       setRecords([]);
       setError(e instanceof Error ? e.message : "Could not load attendance");
@@ -130,7 +131,14 @@ export default function AttendancePage() {
 
       <Card className="mb-4">
         <div className={`grid gap-3 ${isAdmin ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1"}`}>
-          <Input label="Month" type="month" value={month} onChange={setMonth} />
+          <div>
+            <Input label="Salary cycle" type="month" value={month} onChange={setMonth} />
+            {period && (
+              <p className="mt-1 text-[11px] text-slate-400">
+                {formatDayKey(period.start)} → {formatDayKey(period.end)}
+              </p>
+            )}
+          </div>
           {isAdmin && (
             <Select
               label="Employee"

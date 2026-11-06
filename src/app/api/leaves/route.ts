@@ -4,7 +4,9 @@ import { db } from "@/db";
 import { auditLogs, employees, leaveRequests, users } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
 import { holidayKeys, weeklyOffOf } from "@/lib/company";
-import { countWorkdaysBetween, localWorkDate } from "@/lib/payroll";
+import { countWorkdaysBetween, leaveCredits, localWorkDate, type LeaveAccrualMode } from "@/lib/payroll";
+
+const LEAVE_TYPES = ["casual", "medical"] as const;
 
 const MAX_RANGE_DAYS = 60;
 
@@ -29,10 +31,18 @@ export async function GET() {
     employeeIds = ctx.employee ? [ctx.employee.id] : [];
   }
 
-  // Leave balance for the signed-in employee (calendar year in company timezone)
-  const year = localWorkDate(new Date(), tz).getUTCFullYear();
-  let balance = null as null | { year: number; quota: number; used: number; pending: number; remaining: number };
+  // Leave balance for the signed-in employee. Leave accrues one day per month from the joining month:
+  //  - carry: the whole accrued balance (this calendar year) can be used
+  //  - lapse: only this month's leave can be used; unused leave lapses at month end
+  const todayLocal = localWorkDate(new Date(), tz);
+  const year = todayLocal.getUTCFullYear();
+  const month = todayLocal.getUTCMonth();
+  let balance = null as null | {
+    year: number; quota: number; used: number; pending: number; remaining: number;
+    mode: LeaveAccrualMode; accrued: number; thisMonth: number;
+  };
   if (ctx.employee) {
+    const mode: LeaveAccrualMode = ctx.settings?.leaveAccrualMode === "lapse" ? "lapse" : "carry";
     const mine = await db
       .select()
       .from(leaveRequests)
@@ -43,11 +53,22 @@ export async function GET() {
           lt(leaveRequests.startDate, new Date(Date.UTC(year + 1, 0, 1)))
         )
       );
-    const sum = (st: string) => mine.filter((l) => l.status === st).reduce((t, l) => t + Number(l.days), 0);
-    const quota = ctx.settings?.annualLeaveDays ?? 0;
+    const credits = leaveCredits({
+      joinDate: ctx.employee.hireDate ? localWorkDate(ctx.employee.hireDate, tz) : null,
+      today: todayLocal,
+      annualCap: ctx.settings?.annualLeaveDays ?? 0,
+    });
+    const inScope = (startDate: Date) =>
+      mode === "carry" || (startDate.getUTCFullYear() === year && startDate.getUTCMonth() === month);
+    const sum = (st: string) =>
+      mine.filter((l) => l.status === st && inScope(l.startDate)).reduce((t, l) => t + Number(l.days), 0);
+    const quota = mode === "lapse" ? credits.thisMonth : credits.accrued;
     const used = sum("approved");
     const pending = sum("pending");
-    balance = { year, quota, used, pending, remaining: Math.max(0, quota - used - pending) };
+    balance = {
+      year, quota, used, pending, remaining: Math.max(0, quota - used - pending),
+      mode, accrued: credits.accrued, thisMonth: credits.thisMonth,
+    };
   }
 
   if (employeeIds.length === 0) return NextResponse.json({ leaves: [], balance });
@@ -106,6 +127,11 @@ export async function POST(req: Request) {
   if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime()) || endDate < startDate) {
     return NextResponse.json({ error: "Please provide a valid date range." }, { status: 400 });
   }
+  const requestedType = body.leaveType === undefined ? "casual" : String(body.leaveType);
+  if (!(LEAVE_TYPES as readonly string[]).includes(requestedType)) {
+    return NextResponse.json({ error: "Choose Casual or Medical leave." }, { status: 400 });
+  }
+  const leaveType = requestedType;
   const reason = String(body.reason || "").trim().slice(0, 1000);
   if (!reason) return NextResponse.json({ error: "Please provide a reason for the leave." }, { status: 400 });
 
@@ -139,9 +165,9 @@ export async function POST(req: Request) {
 
   const [rec] = await db
     .insert(leaveRequests)
-    .values({ companyId, employeeId: ctx.employee.id, leaveType: "leave", startDate, endDate, days: String(days), reason, currentLevel: 1 })
+    .values({ companyId, employeeId: ctx.employee.id, leaveType, startDate, endDate, days: String(days), reason, currentLevel: 1 })
     .returning();
 
-  await db.insert(auditLogs).values({ companyId, actorId: ctx.user.id, action: "leave.request", entity: "leave", entityId: rec.id, details: { startDate: sd, endDate: ed, days } });
+  await db.insert(auditLogs).values({ companyId, actorId: ctx.user.id, action: "leave.request", entity: "leave", entityId: rec.id, details: { startDate: sd, endDate: ed, days, leaveType } });
   return NextResponse.json({ ok: true, id: rec.id, days });
 }

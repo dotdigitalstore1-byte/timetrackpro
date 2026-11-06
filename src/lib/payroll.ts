@@ -213,6 +213,7 @@ export function countWorkdaysBetween(
 export interface DayRecord {
   status: string; // present | late | half_day | absent | on_leave
   hasPunchIn: boolean;
+  hasPunchOut?: boolean; // false = punched in but never punched out (mandatory punch-out rule)
   earlyLeaveMinutes?: number; // minutes left before shift end (recorded at punch-out)
   overtimeMinutes?: number; // raw minutes worked after shift end (recorded at punch-out)
 }
@@ -273,6 +274,11 @@ export function summarizeMonth(args: {
     const rec = args.records.get(dateKey(day));
     if (rec?.hasPunchIn) {
       inBlock = false;
+      // Mandatory punch-out: punched in but no punch-out by the end of that day => half day.
+      if (rec.hasPunchOut === false && day.getTime() < args.todayLocal.getTime()) {
+        out.halfDays += 1;
+        continue;
+      }
       const early = rec.earlyLeaveMinutes ?? 0;
       const leftTooEarly = !!rules && rules.earlyLeaveHalfDayMinutes > 0 && early > rules.earlyLeaveHalfDayMinutes;
       if (rec.status === "half_day" || leftTooEarly) out.halfDays += 1;
@@ -311,6 +317,57 @@ export function summarizeMonth(args: {
     if (args.records.get(dateKey(d))?.hasPunchIn) out.weekOffWorkedDays = (out.weekOffWorkedDays ?? 0) + 1;
   }
   return out;
+}
+
+/**
+ * Status shown to people and used for reporting. A day with a punch-in but no punch-out is a half day once
+ * that day has ended (the punch-out is mandatory). Today is left alone until the day is over.
+ */
+export function effectiveStatus(
+  rec: { status: string; hasPunchIn: boolean; hasPunchOut?: boolean },
+  workDate: Date,
+  todayLocal: Date
+): string {
+  if (rec.hasPunchIn && rec.hasPunchOut === false && workDate.getTime() < todayLocal.getTime()) return "half_day";
+  return rec.status;
+}
+
+// ------------------------------------------------------------- leave accrual
+
+export type LeaveAccrualMode = "carry" | "lapse";
+
+/**
+ * Leave accrues one day per calendar month, starting with the employee's joining month.
+ *  - accrued:   months employed so far this calendar year, capped at the annual maximum
+ *  - thisMonth: the single leave granted for the current month (0 if not yet employed)
+ * Under "lapse" only thisMonth is spendable; under "carry" the whole accrued balance is.
+ */
+export function leaveCredits(args: { joinDate: Date | null; today: Date; annualCap: number }): {
+  accrued: number;
+  thisMonth: number;
+} {
+  const y = args.today.getUTCFullYear();
+  const m = args.today.getUTCMonth();
+  let startMonth = 0;
+  if (args.joinDate) {
+    const jy = args.joinDate.getUTCFullYear();
+    const jm = args.joinDate.getUTCMonth();
+    if (jy > y || (jy === y && jm > m)) return { accrued: 0, thisMonth: 0 };
+    if (jy === y) startMonth = jm;
+  }
+  const cap = Math.max(0, Math.round(args.annualCap));
+  const months = m - startMonth + 1;
+  return { accrued: Math.min(months, cap), thisMonth: cap > 0 ? 1 : 0 };
+}
+
+// ------------------------------------------------------------ photo retention
+
+/** Punch photos are kept this many days (by work date), then deleted. */
+export const PHOTO_RETENTION_DAYS = 45;
+
+/** Photos for work dates before this (local UTC-midnight date) are due for deletion. */
+export function photoCutoff(todayLocal: Date): Date {
+  return addDays(todayLocal, -PHOTO_RETENTION_DAYS);
 }
 
 // ------------------------------------------------------------------- salary

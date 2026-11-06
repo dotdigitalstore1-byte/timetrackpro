@@ -66,6 +66,12 @@ Deploy to Vercel: add `DATABASE_URL`, `SUPER_ADMIN_*` as environment variables. 
 * **Salary cycle:** *Rules → Salary cycle*. A cycle is named after the month it ends in (start day 26 → "Nov" is
   26 Oct – 25 Nov). A cycle can only be finalized after its last day. Finalized salaries keep their original dates.
   Changing the start day only affects cycles that are not finalized yet - change it right after finalizing one.
+* **Mandatory punch-out:** a day with a punch-in but no punch-out is automatically a **half day** once that day has
+  ended (it is not counted as a present day, and the half-day deduction applies). Today is not penalised until the day ends.
+* **Leave accrual:** each employee earns **1 leave per month** from their joining month (a November joiner sees 1 leave,
+  not 12), capped at *Annual leave days*. Admins choose in **Rules → Leave accrual**: **Carry forward** (the balance
+  accumulates) or **Lapse monthly** (the month's leave must be taken that month or it lapses). Leave is requested as
+  **Casual** or **Medical** and still needs admin approval.
 * Weekly **bi-weekly / weekly** pay cycles are not supported yet (payroll is one record per employee per month cycle).
 * Shift times are same-day (punch-out must be later than punch-in); overnight shifts are not supported yet.
 
@@ -99,16 +105,26 @@ Deploy to Vercel: add `DATABASE_URL`, `SUPER_ADMIN_*` as environment variables. 
 
 ## Operational notes
 
+* Attendance, Photo audit and the dashboard use the **salary cycle** (see *Rules → Salary cycle*), not the calendar month.
 * Existing companies default to timezone `UTC` — an admin must set the real timezone in **Settings**
   (new companies get the browser's timezone at sign-up). Late/half-day status depends on it.
 * Photos are stored in the database (compressed JPEG ≈ 50 KB) and served only through the authorised
   `/api/attendance/:id/photo` endpoint. For large volumes move them to object storage.
+* **Photo retention (45 days):** punch photos are deleted 45 days after their work date; the attendance record, times
+  and salary figures are kept. Deletion runs when an admin opens **Photo audit** and from a scheduled job:
+  `POST /api/maintenance/purge-photos` with header `Authorization: Bearer $CRON_SECRET`. Set `CRON_SECRET` to a long
+  random value and schedule that request once a day (e.g. a Coolify scheduled task). Without it the endpoint refuses to run,
+  and photos are still cleared whenever an admin opens Photo audit.
+* **Photo audit** (company admin, under *More*): review punch photos by salary cycle, employee and department in a grid
+  of large photos, enlarge any photo and download it individually. **Download Excel** exports the attendance data for the
+  same filters; **with photos** embeds the punch photos in the sheet (limited to 400 records per export). Download
+  anything you need before the 45-day window closes. Every export is recorded in the audit log.
 * GPS is validated server-side against the company's geofences, but browser GPS can be spoofed on rooted
   devices; the photo + audit trail are the second line of defence.
 * Self-service password change is available on **Profile**; admins can also reset any employee password from
   **Employees**. E-mail-based "forgot password" and push notifications are not wired up yet.
 * Hosting on Vercel / serverless: use your Postgres provider's **pooled** connection string (Supabase "Transaction
-  pooler", Neon pooled URL) in `DATABASE_URL`, and keep `DB_POOL_MAX` small.
+  pooler", Neon pooled URL) in `DATABASE_URL`, and keep `DB_POOL_MAX` small. Also set `CRON_SECRET` (see Photo retention above).
 * Never commit `.env` / `.env.local` (they are in `.gitignore`); `.env.example` must only contain placeholders.
 * Still to add for a native app store build: subscription-expiry enforcement/billing, an offline punch queue,
   and a native wrapper (Capacitor/React Native) that reuses these APIs. The PWA already installs standalone on

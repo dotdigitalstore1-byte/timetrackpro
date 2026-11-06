@@ -112,6 +112,9 @@ export const companySettings = pgTable("company_settings", {
   extraPayEnabled: boolean("extra_pay_enabled").notNull().default(false), // pay unused comp-off at cycle end
   extraPayRate: numeric("extra_pay_rate", { precision: 4, scale: 2 }).notNull().default("1"), // × daily rate per day
 
+  // ---- Leave accrual: 1 leave per month. "carry" = balance accumulates; "lapse" = a month's leave must be used that month
+  leaveAccrualMode: varchar("leave_accrual_mode", { length: 10 }).notNull().default("carry"),
+
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

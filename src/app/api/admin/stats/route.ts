@@ -71,7 +71,7 @@ export async function GET() {
   let monthAbsent = 0;
   for (const e of emps) {
     const recs = new Map<string, DayRecord>();
-    for (const a of monthAttendance) if (a.employeeId === e.id) recs.set(dateKey(a.workDate), { status: a.status, hasPunchIn: !!a.punchInTime });
+    for (const a of monthAttendance) if (a.employeeId === e.id) recs.set(dateKey(a.workDate), { status: a.status, hasPunchIn: !!a.punchInTime, hasPunchOut: !!a.punchOutTime });
     const sum = summarizeMonth({
       year,
       month,

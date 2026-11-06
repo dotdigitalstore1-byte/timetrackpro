@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, useMe } from "@/lib/client";
-import { Badge, Button, Card, EmptyState, Input, PageHeader, Spinner } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, Input, PageHeader, Select, Spinner } from "@/components/ui";
 import { formatDate } from "@/lib/utils";
 
 interface LeaveRow {
@@ -28,7 +28,10 @@ export default function LeavesPage() {
   const canApprove = isAdmin || isManager;
 
   const [leaves, setLeaves] = useState<LeaveRow[]>([]);
-  const [balance, setBalance] = useState<{ year: number; quota: number; used: number; pending: number; remaining: number } | null>(null);
+  const [balance, setBalance] = useState<{
+    year: number; quota: number; used: number; pending: number; remaining: number;
+    mode: "carry" | "lapse"; accrued: number; thisMonth: number;
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState("");
   const [error, setError] = useState("");
@@ -38,6 +41,7 @@ export default function LeavesPage() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [reason, setReason] = useState("");
+  const [leaveType, setLeaveType] = useState("casual");
 
   const load = useCallback(async () => {
     setLoadError("");
@@ -63,12 +67,13 @@ export default function LeavesPage() {
     try {
       await api("/api/leaves", {
         method: "POST",
-        body: JSON.stringify({ startDate, endDate, reason }),
+        body: JSON.stringify({ startDate, endDate, reason, leaveType }),
       });
       setSuccess("Leave request submitted.");
       setStartDate("");
       setEndDate("");
       setReason("");
+      setLeaveType("casual");
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Request failed");
@@ -102,6 +107,15 @@ export default function LeavesPage() {
           <div className="space-y-3">
             <Input label="Start date" type="date" value={startDate} onChange={setStartDate} />
             <Input label="End date" type="date" value={endDate} onChange={setEndDate} />
+            <Select
+              label="Leave type"
+              value={leaveType}
+              onChange={setLeaveType}
+              options={[
+                { value: "casual", label: "Casual leave" },
+                { value: "medical", label: "Medical leave" },
+              ]}
+            />
             <Input label="Reason" value={reason} onChange={setReason} placeholder="Why do you need leave?" />
             {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">{error}</p>}
             {success && <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700">{success}</p>}
@@ -110,7 +124,12 @@ export default function LeavesPage() {
               <div className="rounded-xl bg-indigo-50 p-3 text-center">
                 <p className="text-2xl font-bold text-indigo-700">{balance.remaining}</p>
                 <p className="text-[11px] font-bold uppercase tracking-wide text-indigo-500">
-                  Leave days remaining ({balance.year})
+                  Leave days available ({balance.year})
+                </p>
+                <p className="mt-1 text-[11px] text-indigo-600">
+                  {balance.mode === "lapse"
+                    ? `This month's leave · unused leave lapses at month end`
+                    : `Accrued ${balance.accrued} (1 per month) · carried forward`}
                 </p>
                 <p className="mt-1 text-[11px] text-indigo-600">
                   Quota {balance.quota} · Approved {balance.used} · Pending {balance.pending}

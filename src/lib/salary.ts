@@ -129,6 +129,7 @@ export async function computeMonth(
     records.set(dateKey(r.workDate), {
       status: r.status,
       hasPunchIn: !!r.punchInTime,
+      hasPunchOut: !!r.punchOutTime,
       earlyLeaveMinutes: r.earlyLeaveMinutes,
       overtimeMinutes: r.overtimeMinutes,
     });

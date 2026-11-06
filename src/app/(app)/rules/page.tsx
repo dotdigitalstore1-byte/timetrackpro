@@ -19,7 +19,11 @@ const FIELDS = [
   "salaryCycleStartDay", "salaryPayDelayDays",
 ] as const;
 
-type Form = Record<(typeof FIELDS)[number], string> & { overtimeEnabled: boolean; extraPayEnabled: boolean };
+type Form = Record<(typeof FIELDS)[number], string> & {
+  overtimeEnabled: boolean;
+  extraPayEnabled: boolean;
+  leaveAccrualMode: "carry" | "lapse";
+};
 
 const DEDUCTION_TYPES = [
   { value: "percentage", label: "% of daily rate" },
@@ -104,7 +108,12 @@ export default function RulesPage() {
       if (!s) throw new Error("Company settings are not available.");
       const f: Record<string, string> = {};
       for (const k of FIELDS) f[k] = String(s[k] ?? "");
-      setForm({ ...(f as Form), overtimeEnabled: !!s.overtimeEnabled, extraPayEnabled: !!s.extraPayEnabled });
+      setForm({
+        ...(f as Form),
+        overtimeEnabled: !!s.overtimeEnabled,
+        extraPayEnabled: !!s.extraPayEnabled,
+        leaveAccrualMode: s.leaveAccrualMode === "lapse" ? "lapse" : "carry",
+      });
       setSavedStartDay(String(s.salaryCycleStartDay ?? "1"));
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Could not load rules");
@@ -133,6 +142,7 @@ export default function RulesPage() {
       const settings: Record<string, unknown> = {
         overtimeEnabled: form.overtimeEnabled,
         extraPayEnabled: form.extraPayEnabled,
+        leaveAccrualMode: form.leaveAccrualMode,
       };
       for (const k of FIELDS) {
         if (k === "shiftStart" || k === "shiftEnd") continue; // default shift lives on the Settings page
@@ -321,6 +331,34 @@ export default function RulesPage() {
               ) : (
                 <>it lapses with no pay.</>
               )}
+            </Example>
+          </Section>
+
+          <Section
+            title="Leave accrual"
+            hint="Each employee earns 1 leave per month, starting from their joining month. A new joiner in November sees 1 leave, not 12."
+          >
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {[
+                { value: "carry" as const, title: "Carry forward", text: "Unused leave accumulates and can be used later in the year." },
+                { value: "lapse" as const, title: "Lapse monthly", text: "The month's leave must be taken in that month, or it lapses." },
+              ].map((o) => (
+                <button
+                  key={o.value}
+                  type="button"
+                  onClick={() => set({ leaveAccrualMode: o.value })}
+                  className={`rounded-xl border p-3 text-left ${
+                    form.leaveAccrualMode === o.value ? "border-indigo-500 bg-indigo-50" : "border-slate-200 bg-white"
+                  }`}
+                >
+                  <p className="text-sm font-bold text-slate-900">{o.title}</p>
+                  <p className="mt-0.5 text-xs text-slate-500">{o.text}</p>
+                </button>
+              ))}
+            </div>
+            <Example>
+              All accrued leave needs admin approval and is recorded as <b>Casual</b> or <b>Medical</b> leave. Approved leave beyond the
+              available balance is still allowed and is deducted as unpaid leave.
             </Example>
           </Section>
 

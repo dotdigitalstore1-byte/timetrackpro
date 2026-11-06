@@ -5,16 +5,26 @@ import { attendance, employeeLocations, employees, geofences, users } from "@/db
 import { getAuth } from "@/lib/auth";
 import { toClientRecord, validPhoto } from "@/lib/attendance-shape";
 import { policyFor, shiftOf } from "@/lib/company";
-import { computeStatus, dateKey, earlyLeaveMinutesOf, localWorkDate, overtimeMinutesOf } from "@/lib/payroll";
+import {
+  addDays,
+  computeStatus,
+  currentCycleKey,
+  cyclePeriod,
+  dateKey,
+  earlyLeaveMinutesOf,
+  effectiveStatus,
+  localWorkDate,
+  overtimeMinutesOf,
+} from "@/lib/payroll";
 import { haversineMeters } from "@/lib/utils";
 
-function parseMonth(value: string | null, tz: string): { year: number; month: number } {
+/** The salary cycle named by `value` (YYYY-MM), or the cycle that contains today when none is given. */
+function parseMonth(value: string | null, tz: string, startDay: number): { year: number; month: number } {
   if (value && /^\d{4}-(0[1-9]|1[0-2])$/.test(value)) {
     const [y, m] = value.split("-").map(Number);
     return { year: y, month: m };
   }
-  const t = localWorkDate(new Date(), tz);
-  return { year: t.getUTCFullYear(), month: t.getUTCMonth() + 1 };
+  return currentCycleKey(localWorkDate(new Date(), tz), startDay);
 }
 
 export async function GET(req: Request) {
@@ -24,11 +34,15 @@ export async function GET(req: Request) {
 
   const tz = ctx.settings?.timezone ?? "UTC";
   const url = new URL(req.url);
-  const { year, month } = parseMonth(url.searchParams.get("month"), tz);
-  const start = new Date(Date.UTC(year, month - 1, 1));
-  const end = new Date(Date.UTC(year, month, 1)); // exclusive
+  // The month parameter names a SALARY CYCLE (e.g. "2026-11" with a 26th start = 26 Oct → 25 Nov).
+  const startDay = ctx.settings?.salaryCycleStartDay ?? 1;
+  const { year, month } = parseMonth(url.searchParams.get("month"), tz, startDay);
+  const period = cyclePeriod(year, month, startDay);
+  const start = period.start;
+  const end = addDays(period.end, 1); // exclusive
   const companyId = ctx.company!.id;
-  const today = dateKey(localWorkDate(new Date(), tz));
+  const todayLocal = localWorkDate(new Date(), tz);
+  const today = dateKey(todayLocal);
 
   let employeeIds: string[];
   if (ctx.user.role === "company_admin") {
@@ -49,7 +63,8 @@ export async function GET(req: Request) {
   }
 
   const monthKey = `${year}-${String(month).padStart(2, "0")}`;
-  if (employeeIds.length === 0) return NextResponse.json({ records: [], today, month: monthKey });
+  const periodInfo = { start: dateKey(start), end: dateKey(period.end) };
+  if (employeeIds.length === 0) return NextResponse.json({ records: [], today, month: monthKey, period: periodInfo });
 
   const rows = await db
     .select()
@@ -69,7 +84,16 @@ export async function GET(req: Request) {
   return NextResponse.json({
     today,
     month: monthKey,
-    records: rows.map((r) => ({ ...toClientRecord(r.attendance), employeeName: r.users.fullName })),
+    period: periodInfo,
+    records: rows.map((r) => {
+      const rec = toClientRecord(r.attendance);
+      const shown = effectiveStatus(
+        { status: rec.status, hasPunchIn: !!rec.punchInTime, hasPunchOut: rec.hasPunchOut },
+        r.attendance.workDate,
+        todayLocal
+      );
+      return { ...rec, status: shown, autoHalfDay: shown === "half_day" && rec.status !== "half_day", employeeName: r.users.fullName };
+    }),
   });
 }
 

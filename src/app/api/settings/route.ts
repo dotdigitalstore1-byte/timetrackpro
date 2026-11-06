@@ -82,6 +82,7 @@ export async function POST(req: Request) {
     if (s.salaryCycleStartDay !== undefined) update.salaryCycleStartDay = clampInt(s.salaryCycleStartDay, 1, 28, 1);
     if (s.salaryPayDelayDays !== undefined) update.salaryPayDelayDays = clampInt(s.salaryPayDelayDays, 0, 60, 5);
     // ---- Weekly-off work & comp-off
+    if (s.leaveAccrualMode !== undefined) update.leaveAccrualMode = s.leaveAccrualMode === "lapse" ? "lapse" : "carry";
     if (typeof s.extraPayEnabled === "boolean") update.extraPayEnabled = s.extraPayEnabled;
     if (s.extraPayRate !== undefined) update.extraPayRate = String(clampNum(s.extraPayRate, 0, 5, 1));
 
