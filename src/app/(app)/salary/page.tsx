@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { api, useMe } from "@/lib/client";
+import { api, hasPower, useMe } from "@/lib/client";
 import { Badge, Button, Card, Input, PageHeader, Spinner } from "@/components/ui";
 import { formatDate, formatDayKey, formatNumber, monthLabel } from "@/lib/utils";
 
@@ -59,6 +59,11 @@ const STATUS_TONE: Record<string, "slate" | "amber" | "indigo" | "green"> = {
 export default function SalaryPage() {
   const { me } = useMe();
   const isAdmin = me?.user.role === "company_admin";
+  // Admins pick anyone; managers with the view_salary power pick people on their team (read only).
+  const canPick = isAdmin || hasPower(me, "view_salary");
+  const [cycleSummary, setCycleSummary] = useState<null | {
+    label: string; activeEmployees: number; draft: number; finalized: number; paid: number; notCalculated: number; netPayable: string; totalDeductions: string;
+  }>(null);
   const currency = me?.settings?.currency ?? "$";
 
   const [month, setMonth] = useState(""); // empty = server decides the current month in company timezone
@@ -81,7 +86,7 @@ export default function SalaryPage() {
     try {
       const qs = new URLSearchParams();
       if (month) qs.set("month", month);
-      if (isAdmin && employeeId) qs.set("employeeId", employeeId);
+      if (canPick && employeeId) qs.set("employeeId", employeeId);
       const d = await api<SalaryData>(`/api/salary?${qs}`);
       setData(d);
       if (!month) setMonth(`${d.year}-${String(d.month).padStart(2, "0")}`);
@@ -91,19 +96,27 @@ export default function SalaryPage() {
     } finally {
       setLoading(false);
     }
-  }, [month, employeeId, isAdmin]);
+  }, [month, employeeId, canPick]);
 
   useEffect(() => {
     load();
   }, [load]);
 
   useEffect(() => {
-    if (isAdmin && employees.length === 0) {
+    if (canPick && employees.length === 0) {
       api<{ employees: { id: string; fullName: string }[] }>("/api/employees")
         .then((d) => setEmployees(d.employees))
         .catch(() => setEmployees([]));
     }
-  }, [isAdmin, employees.length]);
+  }, [canPick, employees.length]);
+
+  // Company-wide progress for the cycle (admins only). Salary totals live here, not on the dashboard.
+  useEffect(() => {
+    if (!isAdmin) return;
+    api<{ payroll?: NonNullable<typeof cycleSummary> }>("/api/dashboard")
+      .then((d) => setCycleSummary(d.payroll ?? null))
+      .catch(() => setCycleSummary(null));
+  }, [isAdmin]);
 
   const act = async (action: string, extra: Record<string, unknown> = {}, confirmText?: string) => {
     if (confirmText && !window.confirm(confirmText)) return;
@@ -132,10 +145,35 @@ export default function SalaryPage() {
     <div>
       <PageHeader title="Salary" subtitle="Transparent attendance-based payroll — deductions and holds are tracked separately" />
 
+      {isAdmin && cycleSummary && (
+        <Card className="mb-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="font-bold text-slate-900">Payroll for this cycle</h3>
+              <p className="text-xs text-slate-500">{cycleSummary.label}</p>
+            </div>
+            <p className="text-xs text-slate-500">
+              {cycleSummary.activeEmployees} active employee{cycleSummary.activeEmployees === 1 ? "" : "s"}
+            </p>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="rounded-xl bg-slate-50 p-3 text-center"><p className="text-lg font-bold text-slate-700">{cycleSummary.notCalculated}</p><p className="text-[10px] font-bold uppercase text-slate-400">Not calculated</p></div>
+            <div className="rounded-xl bg-amber-50 p-3 text-center"><p className="text-lg font-bold text-amber-700">{cycleSummary.draft}</p><p className="text-[10px] font-bold uppercase text-amber-600">Draft</p></div>
+            <div className="rounded-xl bg-indigo-50 p-3 text-center"><p className="text-lg font-bold text-indigo-700">{cycleSummary.finalized}</p><p className="text-[10px] font-bold uppercase text-indigo-500">Finalised</p></div>
+            <div className="rounded-xl bg-emerald-50 p-3 text-center"><p className="text-lg font-bold text-emerald-700">{cycleSummary.paid}</p><p className="text-[10px] font-bold uppercase text-emerald-600">Paid</p></div>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+            <p className="rounded-xl bg-indigo-50 px-3 py-2 font-semibold text-indigo-700">Net payable: {currency}{formatNumber(cycleSummary.netPayable)}</p>
+            <p className="rounded-xl bg-rose-50 px-3 py-2 font-semibold text-rose-700">Deductions: {currency}{formatNumber(cycleSummary.totalDeductions)}</p>
+          </div>
+          <p className="mt-2 text-[11px] text-slate-400">Totals cover finalised and paid salaries only. Drafts are not counted until finalised.</p>
+        </Card>
+      )}
+
       <Card className="mb-4">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Input label="Salary cycle (month it ends in)" type="month" value={month} onChange={setMonth} />
-          {isAdmin && (
+          {canPick && (
             <label className="block">
               <span className="mb-1 block text-xs font-semibold text-slate-600">Employee</span>
               <select

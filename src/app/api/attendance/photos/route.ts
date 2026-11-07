@@ -6,6 +6,7 @@ import { getAuth } from "@/lib/auth";
 import { isUuid } from "@/lib/ids";
 import { loadEmployeeOrg } from "@/lib/org";
 import { purgeExpiredPhotos } from "@/lib/photos";
+import { can, loadAccess, visibleEmployeeIds } from "@/lib/access";
 import {
   addDays,
   currentCycleKey,
@@ -31,7 +32,8 @@ const MAX_ROWS_WITH_PHOTOS = 400; // each photo is ~50 KB; larger exports must b
 export async function GET(req: Request) {
   const ctx = await getAuth();
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (ctx.user.role !== "company_admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const access = await loadAccess(ctx);
+  if (!can(access, "view_photos")) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const companyId = ctx.company!.id;
   const tz = ctx.settings?.timezone ?? "UTC";
   const startDay = ctx.settings?.salaryCycleStartDay ?? 1;
@@ -76,12 +78,14 @@ export async function GET(req: Request) {
   if ((employeeId && !isUuid(employeeId)) || (departmentId && !isUuid(departmentId))) {
     return NextResponse.json({ error: "Invalid filter." }, { status: 400 });
   }
+  // Only the people this viewer may see: all employees for an admin, the team for a manager.
+  const visible = await visibleEmployeeIds(ctx, access);
   const companyEmployees = await db
     .select({ id: employees.id, name: users.fullName })
     .from(employees)
     .innerJoin(users, eq(employees.userId, users.id))
     .where(eq(employees.companyId, companyId));
-  let allowed = new Set(companyEmployees.map((e) => e.id));
+  let allowed = new Set(companyEmployees.map((e) => e.id).filter((id) => visible.has(id)));
   if (departmentId) {
     const members = await db
       .select({ employeeId: employeeDepartments.employeeId })

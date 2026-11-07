@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { api, useMe } from "@/lib/client";
+import { api, hasPower, useMe } from "@/lib/client";
 import { Badge, Button, Card, EmptyState, Input, PageHeader, Select, Spinner } from "@/components/ui";
 import { formatDate } from "@/lib/utils";
 
@@ -23,9 +23,8 @@ interface LeaveRow {
 
 export default function LeavesPage() {
   const { me } = useMe();
-  const isAdmin = me?.user.role === "company_admin";
   const isManager = me?.user.role === "manager";
-  const canApprove = isAdmin || isManager;
+  const canApprove = hasPower(me, "approve_leaves");
 
   const [leaves, setLeaves] = useState<LeaveRow[]>([]);
   const [balance, setBalance] = useState<{
@@ -197,9 +196,9 @@ export default function LeavesPage() {
         </div>
       </div>
 
-      {isManager && (
+      {isManager && canApprove && (
         <p className="mt-4 rounded-xl bg-sky-50 px-4 py-3 text-xs font-medium text-sky-700">
-          Multi-level approval: managers approve Level 1, the company admin approves Level 2 (if enabled in Settings).
+          You approve leave for your team. With two approval levels on, the company admin gives the final approval.
         </p>
       )}
     </div>

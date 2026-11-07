@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLogs, employees, leaveRequests, users } from "@/db/schema";
+import { auditLogs, leaveRequests } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
+import { can, canSeeEmployee, loadAccess } from "@/lib/access";
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await getAuth();
@@ -34,33 +35,21 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
   if (ctx.user.role === "employee") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const requester = (await db.select().from(employees).where(eq(employees.id, leave.employeeId)).limit(1))[0];
-  const isAdmin = ctx.user.role === "company_admin";
-  const isManager = ctx.user.role === "manager";
-  const isLevel1Manager = isManager && !!requester && ctx.employee?.id === requester.managerId;
-
-  // Nobody approves their own leave — unless the company has no other admin who could.
-  let selfApproved = false;
-  if (requester && ctx.employee?.id === requester.id) {
-    const admins = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(and(eq(users.companyId, companyId), eq(users.role, "company_admin"), eq(users.isActive, true)));
-    const otherAdmin = admins.some((a) => a.id !== ctx.user.id);
-    if (otherAdmin || !isAdmin) {
-      return NextResponse.json({ error: "You cannot approve or reject your own leave request." }, { status: 403 });
-    }
-    selfApproved = true;
+  // Approvers: admins for anyone; managers only for people on their team and only with the approve_leaves power.
+  const access = await loadAccess(ctx);
+  if (!(await canSeeEmployee(ctx, access, leave.employeeId))) {
+    return NextResponse.json({ error: "Leave request not found." }, { status: 404 });
   }
+  if (!can(access, "approve_leaves")) {
+    return NextResponse.json({ error: "You do not have permission to approve or reject leave." }, { status: 403 });
+  }
+  const isAdmin = access.isAdmin;
 
   const levels = ctx.settings?.approvalLevels ?? 1;
   const currentLevel = leave.currentLevel;
 
-  if (currentLevel === 1 && !isAdmin && !isLevel1Manager) {
-    return NextResponse.json({ error: "You are not authorized to approve this request at this level." }, { status: 403 });
-  }
   if (currentLevel === 2 && !isAdmin) {
-    return NextResponse.json({ error: "Only a company admin can approve this final level." }, { status: 403 });
+    return NextResponse.json({ error: "Only a company admin can give the final approval." }, { status: 403 });
   }
 
   const updates: Record<string, unknown> = { updatedAt: new Date() };
@@ -89,6 +78,6 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   }
 
   const [updated] = await db.update(leaveRequests).set(updates).where(eq(leaveRequests.id, id)).returning();
-  await db.insert(auditLogs).values({ companyId, actorId: ctx.user.id, action: `leave.${action}`, entity: "leave", entityId: id, details: { level: currentLevel, reason, selfApproved } });
+  await db.insert(auditLogs).values({ companyId, actorId: ctx.user.id, action: `leave.${action}`, entity: "leave", entityId: id, details: { level: currentLevel, reason, employeeId: leave.employeeId } });
   return NextResponse.json({ ok: true, record: updated });
 }

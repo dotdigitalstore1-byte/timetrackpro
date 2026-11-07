@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getAuth } from "@/lib/auth";
 import { shiftOf } from "@/lib/company";
 import { loadEmployeeOrg } from "@/lib/org";
+import { loadAccess, MANAGER_PERMISSIONS } from "@/lib/access";
 
 export async function GET() {
   const ctx = await getAuth();
@@ -9,7 +10,10 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const { user, company, settings, employee } = ctx;
-  const org = employee ? (await loadEmployeeOrg([employee.id])).get(employee.id) : undefined;
+  const [org, access] = await Promise.all([
+    employee ? loadEmployeeOrg([employee.id]).then((m) => m.get(employee.id)) : Promise.resolve(undefined),
+    loadAccess(ctx),
+  ]);
   return NextResponse.json({
     user: {
       id: user.id,
@@ -17,6 +21,15 @@ export async function GET() {
       fullName: user.fullName,
       role: user.role,
       phone: user.phone,
+    },
+    access: {
+      isAdmin: access.isAdmin,
+      isManager: access.isManager,
+      permissions: access.permissions,
+      // every key a manager can hold, with labels, for the admin UI
+      permissionCatalog: MANAGER_PERMISSIONS,
+      departmentIds: access.departmentIds,
+      locationIds: access.locationIds,
     },
     company: company
       ? {

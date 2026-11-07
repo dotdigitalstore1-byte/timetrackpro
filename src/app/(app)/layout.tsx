@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 import { getAuth } from "@/lib/auth";
+import { loadAccess } from "@/lib/access";
 import AppShell from "@/components/AppShell";
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
@@ -9,9 +10,13 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     redirect("/login");
   }
 
+  // Navigation follows the same powers the API enforces, so people only see what they can use.
+  const access = await loadAccess(ctx);
+
   return (
     <AppShell
       role={ctx.user.role}
+      permissions={access.permissions}
       userName={ctx.user.fullName}
       userEmail={ctx.user.email}
       companyName={ctx.company?.name ?? "Platform"}

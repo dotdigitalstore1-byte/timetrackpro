@@ -40,6 +40,7 @@ const icons = {
 
 export default function AppShell({
   role,
+  permissions,
   userName,
   userEmail,
   companyName,
@@ -47,6 +48,7 @@ export default function AppShell({
   children,
 }: {
   role: string;
+  permissions: string[];
   userName: string;
   userEmail: string;
   companyName: string;
@@ -60,35 +62,37 @@ export default function AppShell({
 
   const isSuperAdmin = role === "super_admin";
 
+  const isAdmin = role === "company_admin";
+  const isManager = role === "manager";
+  // Managers only see the areas their admin has switched on for them.
+  const has = (p: string) => isAdmin || (isManager && permissions.includes(p));
+
   const mainNav: NavItem[] = isSuperAdmin
     ? [{ href: "/superadmin", label: "Companies", icon: icons.building }]
     : [
         { href: "/dashboard", label: "Home", icon: icons.home },
         { href: "/attendance", label: "Attendance", icon: icons.attendance },
-        { href: "/leaves", label: "Leaves", icon: icons.leaves },
-        { href: "/salary", label: "Salary", icon: icons.salary },
+        ...(role === "employee" || has("approve_leaves") ? [{ href: "/leaves", label: "Leaves", icon: icons.leaves }] : []),
+        ...(role === "employee" || has("view_salary") ? [{ href: "/salary", label: "Salary", icon: icons.salary }] : []),
       ];
 
-  const moreNav: NavItem[] = [
-    ...(isSuperAdmin
-      ? []
-      : role === "company_admin" || role === "manager"
-        ? [
-            { href: "/reports", label: "Reports", icon: icons.reports },
-            { href: "/employees", label: "Employees", icon: icons.employees },
-          ]
-        : []),
-    ...(!isSuperAdmin && role === "company_admin"
-      ? [
-          { href: "/departments", label: "Departments", icon: icons.departments },
-          { href: "/locations", label: "Locations", icon: icons.locations },
-          { href: "/photo-audit", label: "Photo audit", icon: icons.camera },
-          { href: "/rules", label: "Rules", icon: icons.rules },
-          { href: "/settings", label: "Settings", icon: icons.settings },
-        ]
-      : []),
-    { href: "/profile", label: "Profile", icon: icons.user },
-  ];
+  const moreNav: NavItem[] = isSuperAdmin
+    ? []
+    : [
+        ...(isAdmin || isManager ? [{ href: "/employees", label: "Employees", icon: icons.employees }] : []),
+        ...(isAdmin ? [{ href: "/managers", label: "Managers", icon: icons.employees }] : []),
+        ...(has("view_reports") ? [{ href: "/reports", label: "Reports", icon: icons.reports }] : []),
+        ...(has("view_photos") ? [{ href: "/photo-audit", label: "Photo audit", icon: icons.camera }] : []),
+        ...(isAdmin
+          ? [
+              { href: "/departments", label: "Departments", icon: icons.departments },
+              { href: "/locations", label: "Locations", icon: icons.locations },
+              { href: "/rules", label: "Rules", icon: icons.rules },
+              { href: "/settings", label: "Settings", icon: icons.settings },
+            ]
+          : []),
+        { href: "/profile", label: "Profile", icon: icons.user },
+      ];
 
   const desktopNav = [...mainNav, ...moreNav];
   const bottomNav = mainNav.slice(0, 4);

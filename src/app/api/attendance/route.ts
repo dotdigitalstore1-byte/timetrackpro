@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
-import { and, desc, eq, gte, inArray, lt } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { attendance, employeeLocations, employees, geofences, users } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
-import { toClientRecord, validPhoto } from "@/lib/attendance-shape";
+import { toClientRecord, toListRecord, validPhoto } from "@/lib/attendance-shape";
+import { loadAccess, visibleEmployeeIds } from "@/lib/access";
 import { policyFor, shiftOf } from "@/lib/company";
 import {
   addDays,
@@ -44,30 +45,33 @@ export async function GET(req: Request) {
   const todayLocal = localWorkDate(new Date(), tz);
   const today = dateKey(todayLocal);
 
-  let employeeIds: string[];
-  if (ctx.user.role === "company_admin") {
-    const filterEmp = url.searchParams.get("employeeId");
-    if (filterEmp) employeeIds = [filterEmp];
-    else {
-      const all = await db.select({ id: employees.id }).from(employees).where(eq(employees.companyId, companyId));
-      employeeIds = all.map((e) => e.id);
-    }
-  } else if (ctx.user.role === "manager") {
-    const managed = await db
-      .select({ id: employees.id })
-      .from(employees)
-      .where(and(eq(employees.companyId, companyId), eq(employees.managerId, ctx.employee!.id)));
-    employeeIds = [...new Set([...managed.map((m) => m.id), ctx.employee!.id])];
-  } else {
-    employeeIds = ctx.employee ? [ctx.employee.id] : [];
-  }
+  // Who the viewer may see: admin = all employees, manager = their team, employee = themselves.
+  const access = await loadAccess(ctx);
+  const visible = await visibleEmployeeIds(ctx, access);
+  const filterEmp = url.searchParams.get("employeeId");
+  const employeeIds = [...visible].filter((id) => !filterEmp || id === filterEmp);
 
   const monthKey = `${year}-${String(month).padStart(2, "0")}`;
   const periodInfo = { start: dateKey(start), end: dateKey(period.end) };
   if (employeeIds.length === 0) return NextResponse.json({ records: [], today, month: monthKey, period: periodInfo });
 
+  // Select the photo FLAGS, never the photo data: a month of photos would otherwise be sent on every list load.
   const rows = await db
-    .select()
+    .select({
+      id: attendance.id,
+      employeeId: attendance.employeeId,
+      workDate: attendance.workDate,
+      punchInTime: attendance.punchInTime,
+      punchOutTime: attendance.punchOutTime,
+      status: attendance.status,
+      isManual: attendance.isManual,
+      note: attendance.note,
+      earlyLeaveMinutes: attendance.earlyLeaveMinutes,
+      overtimeMinutes: attendance.overtimeMinutes,
+      hasPunchInPhoto: sql<boolean>`(${attendance.punchInPhoto} is not null)`,
+      hasPunchOutPhoto: sql<boolean>`(${attendance.punchOutPhoto} is not null)`,
+      employeeName: users.fullName,
+    })
     .from(attendance)
     .innerJoin(employees, eq(attendance.employeeId, employees.id))
     .innerJoin(users, eq(employees.userId, users.id))
@@ -86,13 +90,13 @@ export async function GET(req: Request) {
     month: monthKey,
     period: periodInfo,
     records: rows.map((r) => {
-      const rec = toClientRecord(r.attendance);
+      const rec = toListRecord(r);
       const shown = effectiveStatus(
         { status: rec.status, hasPunchIn: !!rec.punchInTime, hasPunchOut: rec.hasPunchOut },
-        r.attendance.workDate,
+        r.workDate,
         todayLocal
       );
-      return { ...rec, status: shown, autoHalfDay: shown === "half_day" && rec.status !== "half_day", employeeName: r.users.fullName };
+      return { ...rec, status: shown, autoHalfDay: shown === "half_day" && rec.status !== "half_day", employeeName: r.employeeName };
     }),
   });
 }
@@ -101,6 +105,9 @@ export async function POST(req: Request) {
   const ctx = await getAuth();
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (ctx.user.role === "super_admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (ctx.user.role !== "employee") {
+    return NextResponse.json({ error: "Only employees punch attendance. Admins and managers supervise from the dashboard." }, { status: 403 });
+  }
   if (!ctx.employee || !ctx.settings) return NextResponse.json({ error: "Employee profile not found" }, { status: 400 });
 
   const companyId = ctx.company!.id;

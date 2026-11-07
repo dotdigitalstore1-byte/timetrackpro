@@ -70,17 +70,49 @@ interface RulesSummary {
   lateMarksLimit: number;
 }
 
-interface StatsData {
+interface PendingLeave {
+  id: string;
+  employeeName: string;
+  leaveType: string;
+  startDate: string;
+  endDate: string;
+  days: string;
+  reason: string | null;
+  currentLevel: number;
+}
+
+interface DashboardData {
+  viewer: { role: string; permissions: string[] };
   today: {
     date: string;
+    isOffDay: boolean;
     totalEmployees: number;
     present: number;
+    clockedIn: number;
     absent: number;
     onLeave: number;
     late: number;
+    halfDay: number;
     pendingLeaves: number;
   };
-  month: { totalPayroll: string; totalDeductions: string };
+  cycle: { label: string; lateMarks: number; halfDays: number; absentDays: number; leaveDays: number };
+  pendingLeaves: PendingLeave[];
+  setup?: {
+    departments: { total: number; active: number };
+    locations: { total: number; active: number };
+    managers: { total: number; active: number; withoutDepartment: number };
+    employeesWithoutDepartment: number;
+    employeesWithoutLocation: number;
+    rules: {
+      graceMinutes: number;
+      lateThresholdMinutes: number;
+      salaryCycleStartDay: number;
+      overtimeEnabled: boolean;
+      lateMarksLimit: number;
+      approvalLevels: number;
+    };
+  };
+  team?: { size: number; departments: string[]; locationCount: number };
 }
 
 export default function DashboardPage() {
@@ -114,7 +146,7 @@ export default function DashboardPage() {
   }
 
   return me.user.role === "company_admin" || me.user.role === "manager" ? (
-    <AdminDashboard role={me.user.role} />
+    <StaffDashboard role={me.user.role} />
   ) : (
     <EmployeeDashboard />
   );
@@ -293,15 +325,11 @@ function EmployeeDashboard() {
   );
 }
 
-function AdminDashboard({ role }: { role: string }) {
+function StaffDashboard({ role }: { role: string }) {
   const { me } = useMe();
-  const currency = me?.settings?.currency ?? "$";
   const isAdmin = role === "company_admin";
-  const [stats, setStats] = useState<StatsData | null>(null);
-  const [leaves, setLeaves] = useState<LeaveRow[]>([]);
-  const [departments, setDepartments] = useState<SetupItem[] | null>(null);
-  const [locations, setLocations] = useState<SetupItem[] | null>(null);
-  const [rules, setRules] = useState<RulesSummary | null>(null);
+  const canApprove = isAdmin || (me?.access.permissions.includes("approve_leaves") ?? false);
+  const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [processing, setProcessing] = useState("");
@@ -309,25 +337,13 @@ function AdminDashboard({ role }: { role: string }) {
   const load = useCallback(async () => {
     setError("");
     try {
-      // Departments / locations are a secondary panel: if they fail the rest of the dashboard still renders.
-      const [s, lv, dept, loc, st] = await Promise.all([
-        api<StatsData>("/api/admin/stats"),
-        api<{ leaves: LeaveRow[] }>("/api/leaves"),
-        isAdmin ? api<{ departments: SetupItem[] }>("/api/departments").catch(() => null) : Promise.resolve(null),
-        isAdmin ? api<{ locations: SetupItem[] }>("/api/locations").catch(() => null) : Promise.resolve(null),
-        isAdmin ? api<{ settings: RulesSummary | null }>("/api/settings").catch(() => null) : Promise.resolve(null),
-      ]);
-      setStats(s);
-      setLeaves(lv.leaves);
-      setDepartments(dept ? dept.departments : null);
-      setLocations(loc ? loc.locations : null);
-      setRules(st?.settings ?? null);
+      setData(await api<DashboardData>("/api/dashboard"));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load the dashboard");
     } finally {
       setLoading(false);
     }
-  }, [isAdmin]);
+  }, []);
 
   useEffect(() => {
     void load();
@@ -345,109 +361,164 @@ function AdminDashboard({ role }: { role: string }) {
     }
   };
 
-  const pendingLeaves = leaves.filter((l) => l.status === "pending");
+  const t = data?.today;
+  const setupIssues = isAdmin && data?.setup
+    ? [
+        data.setup.departments.total === 0 && "Add a department",
+        data.setup.locations.total === 0 && "Add a work location",
+        data.setup.employeesWithoutDepartment > 0 && `${data.setup.employeesWithoutDepartment} employee(s) have no department`,
+        data.setup.employeesWithoutLocation > 0 && `${data.setup.employeesWithoutLocation} employee(s) have no work location`,
+        data.setup.managers.withoutDepartment > 0 && `${data.setup.managers.withoutDepartment} manager(s) have no department`,
+      ].filter(Boolean) as string[]
+    : [];
 
   return (
     <div>
       <PageHeader
-        title="Admin Dashboard"
-        subtitle={stats ? `Overview for ${formatDate(stats.today.date)}` : "Company overview"}
+        title={isAdmin ? "Admin Dashboard" : "Manager Dashboard"}
+        subtitle={t ? `${formatDate(t.date)}${t.isOffDay ? " · Off day" : ""}` : "Company overview"}
         action={
-          <Link href="/reports">
-            <Button variant="secondary" size="sm">View Reports</Button>
-          </Link>
+          isAdmin || me?.access.permissions.includes("view_reports") ? (
+            <Link href="/reports">
+              <Button variant="secondary" size="sm">View Reports</Button>
+            </Link>
+          ) : undefined
         }
       />
 
       {error && <ErrorBanner message={error} onRetry={load} />}
 
-      {isAdmin && (departments || locations || rules) && (
-        <div className="mb-4">
-          {((departments && departments.length === 0) || (locations && locations.length === 0)) && (
-            <p className="mb-3 rounded-xl bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
-              Finish setting up your company: add at least one department and one work location before adding employees.
-            </p>
-          )}
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <SetupCard
-              title="Departments"
-              noun="department"
-              items={departments}
-              href="/departments"
-              addLabel="+ Add department"
-            />
-            <SetupCard
-              title="Locations"
-              noun="location"
-              items={locations}
-              href="/locations"
-              addLabel="+ Add location"
-            />
-            <RulesCard rules={rules} />
-          </div>
+      {setupIssues.length > 0 && (
+        <div className="mb-4 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <p className="font-semibold">Finish setting up</p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-5 text-xs">
+            {setupIssues.map((i) => (
+              <li key={i}>{i}</li>
+            ))}
+          </ul>
         </div>
       )}
 
-      {loading && !stats ? (
+      {loading && !data ? (
         <div className="flex justify-center py-16"><Spinner /></div>
-      ) : stats ? (
+      ) : data && t ? (
         <>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-            <StatCard label="Employees" value={stats.today.totalEmployees} tone="indigo" />
-            <StatCard label="Present" value={stats.today.present} tone="emerald" />
-            <StatCard label="Absent" value={stats.today.absent} tone="rose" />
-            <StatCard label="On Leave" value={stats.today.onLeave} tone="sky" />
-            <StatCard label="Late" value={stats.today.late} tone="amber" />
-            <StatCard label="Pending Leaves" value={stats.today.pendingLeaves} tone="slate" />
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
+            <StatCard label={isAdmin ? "Employees" : "Team"} value={t.totalEmployees} tone="indigo" />
+            <StatCard label="Present today" value={t.present} tone="emerald" />
+            <StatCard label="Clocked in now" value={t.clockedIn} tone="emerald" />
+            <StatCard label="Absent" value={t.absent} tone="rose" />
+            <StatCard label="On leave" value={t.onLeave} tone="sky" />
+            <StatCard label="Late" value={t.late} tone="amber" />
+            <StatCard label="Half day" value={t.halfDay} tone="amber" />
+            <StatCard label="Pending approvals" value={t.pendingLeaves} tone="slate" />
           </div>
 
-          <div className="mt-4 grid gap-4 lg:grid-cols-2">
-            <Card>
-              <h3 className="mb-3 font-bold text-slate-900">Monthly Salary Overview</h3>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-xl bg-indigo-50 p-4">
-                  <p className="text-lg font-bold text-indigo-700">{currency}{formatNumber(stats.month.totalPayroll)}</p>
-                  <p className="text-xs font-semibold text-indigo-500">Total payroll</p>
-                </div>
-                <div className="rounded-xl bg-rose-50 p-4">
-                  <p className="text-lg font-bold text-rose-700">{currency}{formatNumber(stats.month.totalDeductions)}</p>
-                  <p className="text-xs font-semibold text-rose-500">Total deductions</p>
-                </div>
+          <div className="mt-4 grid gap-4 lg:grid-cols-3">
+            <Card className="lg:col-span-1">
+              <h3 className="font-bold text-slate-900">Salary cycle so far</h3>
+              <p className="mb-3 text-xs text-slate-500">{data.cycle.label}</p>
+              <div className="grid grid-cols-2 gap-2">
+                <MiniStat label="Late marks" value={data.cycle.lateMarks} tone="text-amber-700 bg-amber-50" />
+                <MiniStat label="Half days" value={data.cycle.halfDays} tone="text-amber-700 bg-amber-50" />
+                <MiniStat label="Absent days" value={data.cycle.absentDays} tone="text-rose-700 bg-rose-50" />
+                <MiniStat label="Leave days" value={data.cycle.leaveDays} tone="text-sky-700 bg-sky-50" />
               </div>
+              <p className="mt-3 text-[11px] text-slate-400">Counted the same way as payroll. Salary figures are on the Salary page.</p>
             </Card>
-            <Card>
-              <h3 className="mb-3 font-bold text-slate-900">Pending Leave Approvals</h3>
-              {pendingLeaves.length === 0 ? (
+
+            <Card className="lg:col-span-2">
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="font-bold text-slate-900">Pending leave approvals</h3>
+                <Link href="/leaves" className="text-xs font-semibold text-indigo-600 hover:underline">All leaves →</Link>
+              </div>
+              {data.pendingLeaves.length === 0 ? (
                 <EmptyState message="No pending approvals 🎉" />
               ) : (
                 <div className="space-y-2">
-                  {pendingLeaves.slice(0, 4).map((l) => (
+                  {data.pendingLeaves.slice(0, 5).map((l) => (
                     <div key={l.id} className="rounded-xl border border-slate-100 p-3">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-bold text-slate-800">{l.employeeName}</p>
-                          <p className="text-xs text-slate-500">{formatDate(l.startDate)} → {formatDate(l.endDate)} · {l.days} day(s)</p>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-bold text-slate-800">{l.employeeName}</p>
+                          <p className="text-xs text-slate-500">
+                            {formatDate(l.startDate)} → {formatDate(l.endDate)} · {l.days} day(s) · {l.leaveType === "medical" ? "Medical" : "Casual"}
+                          </p>
                         </div>
-                        <Badge tone="amber">{l.currentLevel === 2 ? "Level 2" : "Level 1"}</Badge>
+                        <Badge tone="amber">{data.setup?.rules.approvalLevels === 2 && l.currentLevel === 2 ? "Final approval" : "Pending"}</Badge>
                       </div>
-                      <div className="mt-2 flex gap-2">
-                        <Button size="sm" variant="success" loading={processing === l.id} onClick={() => decide(l.id, "approve")}>Approve</Button>
-                        <Button size="sm" variant="danger" loading={processing === l.id} onClick={() => decide(l.id, "reject")}>Reject</Button>
-                      </div>
+                      {canApprove && (
+                        <div className="mt-2 flex gap-2">
+                          <Button size="sm" variant="success" loading={processing === l.id} onClick={() => decide(l.id, "approve")}>Approve</Button>
+                          <Button size="sm" variant="danger" loading={processing === l.id} onClick={() => decide(l.id, "reject")}>Reject</Button>
+                        </div>
+                      )}
                     </div>
                   ))}
+                  {data.pendingLeaves.length > 5 && (
+                    <Link href="/leaves" className="block text-center text-xs font-semibold text-indigo-600 hover:underline">
+                      +{data.pendingLeaves.length - 5} more
+                    </Link>
+                  )}
                 </div>
               )}
             </Card>
           </div>
+
+          {isAdmin && data.setup && (
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <SetupCard
+                title="Departments"
+                noun="department"
+                total={data.setup.departments.total}
+                active={data.setup.departments.active}
+                href="/departments"
+                addLabel="+ Add department"
+              />
+              <SetupCard
+                title="Locations"
+                noun="location"
+                total={data.setup.locations.total}
+                active={data.setup.locations.active}
+                href="/locations"
+                addLabel="+ Add location"
+              />
+              <SetupCard
+                title="Managers"
+                noun="manager"
+                total={data.setup.managers.total}
+                active={data.setup.managers.active}
+                href="/managers"
+                addLabel="+ Add manager"
+              />
+              <RulesCard rules={data.setup.rules} />
+            </div>
+          )}
+
+          {!isAdmin && data.team && (
+            <Card className="mt-4">
+              <h3 className="font-bold text-slate-900">Your team</h3>
+              <p className="mt-1 text-sm text-slate-600">
+                {data.team.size} employee{data.team.size === 1 ? "" : "s"}
+                {data.team.departments.length ? ` in ${data.team.departments.join(", ")}` : ""}
+                {data.team.locationCount ? ` · ${data.team.locationCount} work location(s)` : ""}
+              </p>
+              <p className="mt-2 text-xs text-slate-500">
+                Your powers are set by your company admin. Anything outside your team or your powers is hidden from you.
+              </p>
+            </Card>
+          )}
         </>
       ) : null}
+    </div>
+  );
+}
 
-      {role === "manager" && (
-        <p className="mt-4 rounded-xl bg-sky-50 px-4 py-3 text-xs font-medium text-sky-700">
-          You can approve Level 1 leave requests for your team. Final approvals are handled by the company admin.
-        </p>
-      )}
+function MiniStat({ label, value, tone }: { label: string; value: number; tone: string }) {
+  return (
+    <div className={`rounded-xl p-3 text-center ${tone}`}>
+      <p className="text-xl font-bold">{value}</p>
+      <p className="text-[10px] font-bold uppercase">{label}</p>
     </div>
   );
 }
@@ -455,83 +526,52 @@ function AdminDashboard({ role }: { role: string }) {
 function SetupCard({
   title,
   noun,
-  items,
+  total,
+  active,
   href,
   addLabel,
 }: {
   title: string;
   noun: string;
-  items: SetupItem[] | null;
+  total: number;
+  active: number;
   href: string;
   addLabel: string;
 }) {
-  const total = items?.length ?? 0;
-  const active = items?.filter((i) => i.isActive).length ?? 0;
   return (
     <Card className="p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h3 className="font-bold text-slate-900">{title}</h3>
           <p className="text-xs text-slate-500">
-            {items === null
-              ? "Could not load"
-              : total === 0
-                ? `No ${noun}s yet`
-                : `${total} ${noun}${total === 1 ? "" : "s"} · ${active} active`}
+            {total === 0 ? `No ${noun}s yet` : `${total} ${noun}${total === 1 ? "" : "s"} · ${active} active`}
           </p>
         </div>
         <Link href={href}>
           <Button size="sm">{total === 0 ? addLabel : "Manage"}</Button>
         </Link>
       </div>
-      {items && total > 0 && (
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {items.slice(0, 6).map((i) => (
-            <span
-              key={i.id}
-              className={`rounded-full px-2.5 py-1 text-xs font-semibold ${i.isActive ? "bg-indigo-50 text-indigo-700" : "bg-slate-100 text-slate-400"}`}
-            >
-              {i.name}
-            </span>
-          ))}
-          {total > 6 && <span className="px-1 py-1 text-xs font-semibold text-slate-400">+{total - 6} more</span>}
-        </div>
-      )}
-      {items && total > 0 && (
-        <Link href={href} className="mt-3 inline-block text-xs font-semibold text-indigo-600 hover:underline">
-          {addLabel} →
-        </Link>
-      )}
     </Card>
   );
 }
 
-
-function RulesCard({ rules }: { rules: RulesSummary | null }) {
-  const cycle =
-    !rules || rules.salaryCycleStartDay <= 1
-      ? "Calendar-month salary cycle"
-      : `Salary cycle: day ${rules.salaryCycleStartDay} → ${rules.salaryCycleStartDay - 1}`;
+function RulesCard({ rules }: { rules: NonNullable<NonNullable<DashboardData["setup"]>["rules"]> }) {
   return (
     <Card className="p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="font-bold text-slate-900">Rules</h3>
-          <p className="text-xs text-slate-500">{rules ? "Attendance, deductions & salary cycle" : "Could not load"}</p>
+          <h3 className="font-bold text-slate-900">Attendance rules</h3>
+          <p className="text-xs text-slate-500">Late, half-day and overtime rules</p>
         </div>
         <Link href="/rules">
           <Button size="sm">Manage</Button>
         </Link>
       </div>
-      {rules && (
-        <ul className="mt-3 space-y-1 text-xs text-slate-600">
-          <li>{rules.graceMinutes}-minute cool-off · half day after {rules.lateThresholdMinutes} min late</li>
-          <li>{cycle}</li>
-          <li>
-            Overtime {rules.overtimeEnabled ? "on" : "off"} · late-marks rule {rules.lateMarksLimit > 0 ? `every ${rules.lateMarksLimit}` : "off"}
-          </li>
-        </ul>
-      )}
+      <ul className="mt-3 space-y-1 text-xs text-slate-600">
+        <li>{rules.graceMinutes}-minute cool-off · half day after {rules.lateThresholdMinutes} min late</li>
+        <li>Overtime {rules.overtimeEnabled ? "on" : "off"} · late-marks rule {rules.lateMarksLimit > 0 ? `every ${rules.lateMarksLimit}` : "off"}</li>
+        <li>Approval: {rules.approvalLevels === 2 ? "manager, then admin" : "single approver"}</li>
+      </ul>
     </Card>
   );
 }

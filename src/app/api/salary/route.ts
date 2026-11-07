@@ -3,6 +3,7 @@ import { and, desc, eq, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLogs, employees, salaryRecords, users } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
+import { can, canSeeEmployee, loadAccess } from "@/lib/access";
 import { addDays, currentCycleKey, cyclePeriod, dateKey, localWorkDate } from "@/lib/payroll";
 import { computeMonth, finalizeMonth, releaseHold, saveDraft } from "@/lib/salary";
 
@@ -27,10 +28,18 @@ export async function GET(req: Request) {
   const { year, month } = parseMonth(url.searchParams.get("month"), tz, cycleStartDay);
   const requested = url.searchParams.get("employeeId");
 
+  // Admins can open any employee. Managers with the view_salary power can open people on their team (read only).
+  const access = await loadAccess(ctx);
   let employeeId: string;
-  if (ctx.user.role === "company_admin" && requested) employeeId = requested;
-  else if (ctx.employee) employeeId = ctx.employee.id;
-  else return NextResponse.json({ error: "Employee profile not found." }, { status: 400 });
+  if (requested) {
+    const allowed = access.isAdmin || (can(access, "view_salary") && (await canSeeEmployee(ctx, access, requested)));
+    if (!allowed) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    employeeId = requested;
+  } else if (ctx.employee) {
+    employeeId = ctx.employee.id;
+  } else {
+    return NextResponse.json({ error: access.isAdmin ? "Select an employee." : "Employee profile not found." }, { status: 400 });
+  }
 
   let c;
   try {

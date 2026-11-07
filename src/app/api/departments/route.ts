@@ -3,11 +3,13 @@ import { and, asc, count, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLogs, departments, employeeDepartments } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
+import { loadAccess } from "@/lib/access";
 
 export async function GET() {
   const ctx = await getAuth();
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (ctx.user.role !== "company_admin" && ctx.user.role !== "manager") {
+  const access = await loadAccess(ctx);
+  if (!access.isAdmin && !access.isManager) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   const companyId = ctx.company!.id;
@@ -28,7 +30,10 @@ export async function GET() {
     .orderBy(asc(sql`lower(${departments.name})`));
 
   return NextResponse.json({
-    departments: rows.map((r) => ({ ...r, employeeCount: Number(r.employeeCount) })),
+    // Managers only see the departments they are responsible for.
+    departments: rows
+      .filter((r) => access.isAdmin || access.departmentIds.includes(r.id))
+      .map((r) => ({ ...r, employeeCount: Number(r.employeeCount) })),
   });
 }
 

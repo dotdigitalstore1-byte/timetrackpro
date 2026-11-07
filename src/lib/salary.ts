@@ -106,8 +106,16 @@ export async function computeMonth(
   const additions = (record?.additions ?? []) as { label: string; amount: number }[];
 
   const [att, leaves, holidays] = await Promise.all([
+    // Only the fields payroll uses: never load punch photos to calculate pay.
     db
-      .select()
+      .select({
+        workDate: attendance.workDate,
+        status: attendance.status,
+        punchInTime: attendance.punchInTime,
+        punchOutTime: attendance.punchOutTime,
+        earlyLeaveMinutes: attendance.earlyLeaveMinutes,
+        overtimeMinutes: attendance.overtimeMinutes,
+      })
       .from(attendance)
       .where(and(eq(attendance.employeeId, employeeId), gte(attendance.workDate, start), lt(attendance.workDate, end))),
     db

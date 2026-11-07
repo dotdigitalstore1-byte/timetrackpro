@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { api, useMe } from "@/lib/client";
+import { api, hasPower, useMe } from "@/lib/client";
 import { Badge, Button, Card, ChipSelect, EmptyState, ErrorBanner, Input, Modal, PageHeader, Select, Spinner } from "@/components/ui";
 import { formatDate, formatNumber } from "@/lib/utils";
 
@@ -77,6 +77,8 @@ function OrgChips({ items, legacy }: { items: OrgRef[]; legacy?: string | null }
 export default function EmployeesPage() {
   const { me, loading: meLoading } = useMe();
   const isAdmin = me?.user.role === "company_admin";
+  // Admins, and managers with the manage_employees power, can add and edit people (salary is admin-only).
+  const canManage = hasPower(me, "manage_employees");
   const currency = me?.settings?.currency ?? "$";
 
   const [employees, setEmployees] = useState<EmployeeRow[]>([]);
@@ -97,8 +99,8 @@ export default function EmployeesPage() {
       // Departments and locations are only needed (and only permitted) for admins.
       const [emp, dept, loc] = await Promise.all([
         api<{ employees: EmployeeRow[] }>("/api/employees"),
-        isAdmin ? api<{ departments: OrgOption[] }>("/api/departments") : Promise.resolve(null),
-        isAdmin ? api<{ locations: OrgOption[] }>("/api/locations") : Promise.resolve(null),
+        canManage ? api<{ departments: OrgOption[] }>("/api/departments") : Promise.resolve(null),
+        canManage ? api<{ locations: OrgOption[] }>("/api/locations") : Promise.resolve(null),
       ]);
       setEmployees(emp.employees);
       if (dept) setDepartments(dept.departments);
@@ -108,7 +110,7 @@ export default function EmployeesPage() {
     } finally {
       setLoading(false);
     }
-  }, [isAdmin]);
+  }, [canManage]);
 
   useEffect(() => {
     if (me) void load();
@@ -188,13 +190,11 @@ export default function EmployeesPage() {
           body: JSON.stringify({
             fullName: form.fullName,
             phone: form.phone,
-            role: form.role,
             employeeCode: form.employeeCode,
             designation: form.designation,
             shiftStart: form.shiftStart,
             shiftEnd: form.shiftEnd,
             basicSalary: form.basicSalary,
-            managerId: form.managerId || null,
             departmentIds: form.departmentIds,
             locationIds: form.locationIds,
             ...(form.password ? { password: form.password } : {}),
@@ -203,7 +203,7 @@ export default function EmployeesPage() {
       } else {
         await api("/api/employees", {
           method: "POST",
-          body: JSON.stringify(form),
+          body: JSON.stringify({ ...form, role: "employee", managerId: null }),
         });
       }
       setModalOpen(false);
@@ -241,8 +241,8 @@ export default function EmployeesPage() {
     <div>
       <PageHeader
         title="Employees"
-        subtitle={isAdmin ? "Manage employees, managers and salaries" : "View your team"}
-        action={isAdmin ? <Button size="sm" onClick={openAdd}>+ Add Employee</Button> : undefined}
+        subtitle={isAdmin ? "Manage employees and salaries" : canManage ? "Manage your team" : "View your team"}
+        action={canManage ? <Button size="sm" onClick={openAdd}>+ Add Employee</Button> : undefined}
       />
 
       <Card className="mb-4 p-3">
@@ -256,7 +256,7 @@ export default function EmployeesPage() {
         </p>
       </Card>
 
-      {isAdmin && !loading && !loadError && (departments.length === 0 || locations.length === 0) && (
+      {canManage && !loading && !loadError && (departments.length === 0 || locations.length === 0) && (
         <div className="mb-4 rounded-xl bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
           Before adding employees, set up{" "}
           {departments.length === 0 && <Link href="/departments" className="font-bold underline">departments</Link>}
@@ -287,9 +287,8 @@ export default function EmployeesPage() {
                   <th className="px-4 py-3 font-semibold">Designation</th>
                   <th className="px-4 py-3 font-semibold">Shift</th>
                   <th className="px-4 py-3 font-semibold">Basic Salary</th>
-                  <th className="px-4 py-3 font-semibold">Manager</th>
                   <th className="px-4 py-3 font-semibold">Status</th>
-                  {isAdmin && <th className="px-4 py-3 font-semibold">Actions</th>}
+                  {canManage && <th className="px-4 py-3 font-semibold">Actions</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
@@ -309,19 +308,18 @@ export default function EmployeesPage() {
                     <td className="px-4 py-3 font-semibold text-slate-700">
                       {e.basicSalary == null ? "—" : `${currency}${formatNumber(e.basicSalary)}`}
                     </td>
-                    <td className="px-4 py-3 text-slate-600">{e.managerName || "—"}</td>
                     <td className="px-4 py-3">
                       <Badge tone={e.isActive ? "green" : "red"}>{e.isActive ? "Active" : "Inactive"}</Badge>
                     </td>
-                    {isAdmin && (
+                    {canManage && (
                       <td className="px-4 py-3">
                         <div className="flex gap-1.5">
                           <Button size="sm" variant="secondary" onClick={() => openEdit(e)}>Edit</Button>
-                          {e.isActive ? (
+                          {isAdmin && (e.isActive ? (
                             <Button size="sm" variant="danger" onClick={() => deactivate(e)}>Remove</Button>
                           ) : (
                             <Button size="sm" variant="success" onClick={() => reactivate(e)}>Reactivate</Button>
-                          )}
+                          ))}
                         </div>
                       </td>
                     )}
@@ -365,10 +363,6 @@ export default function EmployeesPage() {
                     <p className="text-slate-400">Employee code</p>
                     <p className="font-semibold text-slate-700">{e.employeeCode || "—"}</p>
                   </div>
-                  <div>
-                    <p className="text-slate-400">Manager</p>
-                    <p className="font-semibold text-slate-700">{e.managerName || "—"}</p>
-                  </div>
                   {isAdmin && (
                     <div>
                       <p className="text-slate-400">Basic salary</p>
@@ -382,14 +376,14 @@ export default function EmployeesPage() {
                     <p className="font-semibold text-slate-700">{formatDate(e.hireDate)}</p>
                   </div>
                 </div>
-                {isAdmin && (
+                {canManage && (
                   <div className="mt-3 flex gap-2">
                     <Button size="sm" variant="secondary" className="flex-1" onClick={() => openEdit(e)}>Edit</Button>
-                    {e.isActive ? (
+                    {isAdmin && (e.isActive ? (
                       <Button size="sm" variant="danger" className="flex-1" onClick={() => deactivate(e)}>Remove</Button>
                     ) : (
                       <Button size="sm" variant="success" className="flex-1" onClick={() => reactivate(e)}>Reactivate</Button>
-                    )}
+                    ))}
                   </div>
                 )}
               </div>
@@ -410,15 +404,6 @@ export default function EmployeesPage() {
             placeholder={editing ? "Optional reset" : "At least 8 characters"}
           />
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Select
-              label="Role"
-              value={form.role}
-              onChange={(v) => setForm({ ...form, role: v })}
-              options={[
-                { value: "employee", label: "Employee" },
-                { value: "manager", label: "Manager" },
-              ]}
-            />
             <Input label="Employee code" value={form.employeeCode} onChange={(v) => setForm({ ...form, employeeCode: v })} />
           </div>
           <Input label="Designation" value={form.designation} onChange={(v) => setForm({ ...form, designation: v })} />
@@ -448,17 +433,9 @@ export default function EmployeesPage() {
             emptyHint={<>No locations yet. <Link href="/locations" className="font-bold underline">Add a work location</Link> first.</>}
           />
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Input label="Basic salary (monthly)" type="number" value={form.basicSalary} onChange={(v) => setForm({ ...form, basicSalary: v })} />
+            {isAdmin && <Input label="Basic salary (monthly)" type="number" value={form.basicSalary} onChange={(v) => setForm({ ...form, basicSalary: v })} />}
             <Input label="Phone" value={form.phone} onChange={(v) => setForm({ ...form, phone: v })} />
           </div>
-          {isAdmin && (
-            <Select
-              label="Manager"
-              value={form.managerId}
-              onChange={(v) => setForm({ ...form, managerId: v })}
-              options={[{ value: "", label: "No manager" }, ...employees.filter((e) => e.role === "manager").map((e) => ({ value: e.id, label: e.fullName }))]}
-            />
-          )}
           {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">{error}</p>}
           <div className="flex gap-2 pt-1">
             <Button variant="secondary" className="flex-1" onClick={() => setModalOpen(false)}>Cancel</Button>

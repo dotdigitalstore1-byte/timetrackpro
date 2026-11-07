@@ -3,12 +3,14 @@ import { asc, count, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLogs, employeeLocations, geofences } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
+import { loadAccess } from "@/lib/access";
 import { parseLocationInput } from "@/lib/locations";
 
 export async function GET() {
   const ctx = await getAuth();
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (ctx.user.role !== "company_admin" && ctx.user.role !== "manager") {
+  const access = await loadAccess(ctx);
+  if (!access.isAdmin && !access.isManager) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   const companyId = ctx.company!.id;
@@ -32,7 +34,10 @@ export async function GET() {
     .orderBy(asc(sql`lower(${geofences.name})`));
 
   return NextResponse.json({
-    locations: rows.map((r) => ({ ...r, employeeCount: Number(r.employeeCount) })),
+    // Managers only see the work locations they are responsible for.
+    locations: rows
+      .filter((r) => access.isAdmin || access.locationIds.includes(r.id))
+      .map((r) => ({ ...r, employeeCount: Number(r.employeeCount) })),
   });
 }
 

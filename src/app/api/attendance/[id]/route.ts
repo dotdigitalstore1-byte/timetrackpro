@@ -6,14 +6,18 @@ import { getAuth } from "@/lib/auth";
 import { toClientRecord } from "@/lib/attendance-shape";
 import { policyFor, shiftOf } from "@/lib/company";
 import { computeStatus, earlyLeaveMinutesOf, overtimeMinutesOf } from "@/lib/payroll";
+import { can, canSeeEmployee, loadAccess } from "@/lib/access";
 
 const STATUSES = ["present", "late", "half_day", "absent", "on_leave"];
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await getAuth();
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (ctx.user.role !== "company_admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const access = await loadAccess(ctx);
+  if (!can(access, "manage_attendance")) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const { id } = await params;
+  const owner = (await db.select({ employeeId: attendance.employeeId }).from(attendance).where(and(eq(attendance.id, id), eq(attendance.companyId, ctx.company!.id))).limit(1))[0];
+  if (!owner || !(await canSeeEmployee(ctx, access, owner.employeeId))) return NextResponse.json({ error: "Attendance record not found." }, { status: 404 });
   const trail = await db
     .select()
     .from(attendanceAudit)
@@ -25,8 +29,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await getAuth();
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (ctx.user.role !== "company_admin") {
-    return NextResponse.json({ error: "Only company admins can edit attendance." }, { status: 403 });
+  const access = await loadAccess(ctx);
+  if (!can(access, "manage_attendance")) {
+    return NextResponse.json({ error: "You do not have permission to edit attendance." }, { status: 403 });
   }
   const companyId = ctx.company!.id;
   const { id } = await params;
@@ -55,7 +60,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const note = body.note !== undefined ? String(body.note).slice(0, 500) : null;
 
   const rec = (await db.select().from(attendance).where(and(eq(attendance.id, id), eq(attendance.companyId, companyId))).limit(1))[0];
-  if (!rec) return NextResponse.json({ error: "Attendance record not found." }, { status: 404 });
+  if (!rec || !(await canSeeEmployee(ctx, access, rec.employeeId))) {
+    return NextResponse.json({ error: "Attendance record not found." }, { status: 404 });
+  }
 
   const finalIn = punchIn ?? rec.punchInTime;
   const finalOut = punchOut ?? rec.punchOutTime;
@@ -110,4 +117,44 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   });
 
   return NextResponse.json({ ok: true, record: toClientRecord(updated), changes });
+}
+
+/** Remove an attendance record. The removed record is kept in the company audit log; its edit trail goes with it. */
+export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const ctx = await getAuth();
+  if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = await loadAccess(ctx);
+  if (!can(access, "manage_attendance")) {
+    return NextResponse.json({ error: "You do not have permission to remove attendance." }, { status: 403 });
+  }
+  const companyId = ctx.company!.id;
+  const { id } = await params;
+  const body = (await req.json().catch(() => ({}))) as { reason?: unknown };
+  const reason = String(body.reason || "").trim().slice(0, 500);
+  if (reason.length < 3) return NextResponse.json({ error: "A reason is required to remove attendance." }, { status: 400 });
+
+  const rec = (await db.select().from(attendance).where(and(eq(attendance.id, id), eq(attendance.companyId, companyId))).limit(1))[0];
+  if (!rec || !(await canSeeEmployee(ctx, access, rec.employeeId))) {
+    return NextResponse.json({ error: "Attendance record not found." }, { status: 404 });
+  }
+
+  await db.transaction(async (tx) => {
+    await tx.insert(auditLogs).values({
+      companyId,
+      actorId: ctx.user.id,
+      action: "attendance.delete",
+      entity: "attendance",
+      entityId: id,
+      details: {
+        reason,
+        employeeId: rec.employeeId,
+        workDate: rec.workDate.toISOString(),
+        punchInTime: rec.punchInTime?.toISOString() ?? null,
+        punchOutTime: rec.punchOutTime?.toISOString() ?? null,
+        status: rec.status,
+      },
+    });
+    await tx.delete(attendance).where(eq(attendance.id, id));
+  });
+  return NextResponse.json({ ok: true });
 }

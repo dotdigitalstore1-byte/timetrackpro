@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, ApiError, downloadBlob, useMe } from "@/lib/client";
+import { api, ApiError, downloadBlob, hasPower, useMe } from "@/lib/client";
 import { Badge, Button, Card, EmptyState, ErrorBanner, Input, Modal, PageHeader, Select, Spinner } from "@/components/ui";
 import { formatDayKey, formatTime } from "@/lib/utils";
 
@@ -50,7 +50,7 @@ function query(params: Record<string, string>) {
 /** Salary-cycle month input: the cycle is named after the month it ends in. Empty = the current cycle. */
 export default function PhotoAuditPage() {
   const { me, loading: meLoading } = useMe();
-  const isAdmin = me?.user.role === "company_admin";
+  const isAdmin = hasPower(me, "view_photos");
 
   const [month, setMonth] = useState("");
   const [employeeId, setEmployeeId] = useState("");
@@ -141,7 +141,7 @@ export default function PhotoAuditPage() {
   }, [records]);
 
   if (meLoading) return <div className="flex justify-center py-16"><Spinner /></div>;
-  if (!isAdmin) return <EmptyState message="Only company admins can review punch photos." />;
+  if (!isAdmin) return <EmptyState message="You do not have permission to review punch photos." />;
 
   return (
     <div>

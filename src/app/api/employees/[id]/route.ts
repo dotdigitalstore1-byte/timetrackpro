@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLogs, employees, users } from "@/db/schema";
 import { getAuth, hashPassword } from "@/lib/auth";
+import { can, canSeeEmployee, loadAccess } from "@/lib/access";
 import { shiftOf } from "@/lib/company";
 import { parseIdList, replaceEmployeeOrg, validateOrgIds } from "@/lib/org";
 import { isValidHHMM, parseHHMM } from "@/lib/payroll";
@@ -10,24 +11,35 @@ import { isValidHHMM, parseHHMM } from "@/lib/payroll";
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await getAuth();
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (ctx.user.role !== "company_admin") {
-    return NextResponse.json({ error: "Only company admins can edit employees." }, { status: 403 });
+  const access = await loadAccess(ctx);
+  if (!can(access, "manage_employees")) {
+    return NextResponse.json({ error: "You do not have permission to edit employees." }, { status: 403 });
   }
   const companyId = ctx.company!.id;
   const { id } = await params;
 
   const emp = await db.select().from(employees).where(eq(employees.id, id)).limit(1);
-  if (!emp[0] || emp[0].companyId !== companyId) {
+  if (!emp[0] || emp[0].companyId !== companyId || !(await canSeeEmployee(ctx, access, id))) {
     return NextResponse.json({ error: "Employee not found." }, { status: 404 });
   }
 
   const body = await req.json();
+
+  // Managers may update their team's details and org assignment. Salary, login status, password and role stay with admins.
+  if (!access.isAdmin) {
+    const adminOnly = body.basicSalary !== undefined || body.password !== undefined || body.isActive !== undefined || body.role !== undefined || body.managerId !== undefined;
+    if (adminOnly) {
+      return NextResponse.json({ error: "Only company admins can change salary, password, login status or role." }, { status: 403 });
+    }
+  }
+  if (body.role !== undefined && body.role !== "employee") {
+    return NextResponse.json({ error: "Create managers from the Managers page." }, { status: 400 });
+  }
   const userUpdate: Record<string, unknown> = {};
   const empUpdate: Record<string, unknown> = {};
 
   if (typeof body.fullName === "string" && body.fullName.trim()) userUpdate.fullName = body.fullName.trim();
   if (typeof body.phone === "string") userUpdate.phone = body.phone.trim();
-  if (typeof body.role === "string" && ["employee", "manager"].includes(body.role)) userUpdate.role = body.role;
   if (typeof body.password === "string" && body.password) {
     if (body.password.length < 8) {
       return NextResponse.json({ error: "A new password must be at least 8 characters." }, { status: 400 });
@@ -58,15 +70,6 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     }
     empUpdate.basicSalary = String(salary);
   }
-  if (body.managerId !== undefined) {
-    const mid = body.managerId ? String(body.managerId) : null;
-    if (mid) {
-      if (mid === id) return NextResponse.json({ error: "An employee cannot be their own manager." }, { status: 400 });
-      const m = await db.select({ id: employees.id }).from(employees).where(and(eq(employees.id, mid), eq(employees.companyId, companyId))).limit(1);
-      if (!m[0]) return NextResponse.json({ error: "Selected manager was not found in your company." }, { status: 400 });
-    }
-    empUpdate.managerId = mid;
-  }
   if (typeof body.isActive === "boolean") {
     if (!body.isActive && emp[0].userId === ctx.user.id) {
       return NextResponse.json({ error: "You cannot deactivate your own account." }, { status: 400 });
@@ -93,6 +96,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if (departmentIds || locationIds) {
     const orgError = await validateOrgIds(companyId, departmentIds ?? [], locationIds ?? []);
     if (orgError) return NextResponse.json({ error: orgError }, { status: 400 });
+  }
+  // A manager can only assign departments and locations they are responsible for.
+  if (!access.isAdmin) {
+    if (departmentIds && !departmentIds.every((d) => access.departmentIds.includes(d))) {
+      return NextResponse.json({ error: "You can only assign departments you manage." }, { status: 403 });
+    }
+    if (locationIds && access.locationIds.length > 0 && !locationIds.every((l) => access.locationIds.includes(l))) {
+      return NextResponse.json({ error: "You can only assign work locations you manage." }, { status: 403 });
+    }
   }
 
   await db.transaction(async (tx) => {

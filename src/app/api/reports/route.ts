@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
-import { and, asc, desc, eq, gte, lt } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { attendance, employees, leaveRequests, salaryRecords, users } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
+import { can, loadAccess, visibleEmployeeIds } from "@/lib/access";
 import { formatDate, formatTime, workingHours } from "@/lib/utils";
 import { dateKey, localWorkDate } from "@/lib/payroll";
 import { loadEmployeeOrg } from "@/lib/org";
@@ -40,12 +41,13 @@ export async function GET(req: Request) {
   const ctx = await getAuth();
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   // Reports expose company-wide attendance and salary data: admins and managers only.
-  if (ctx.user.role !== "company_admin" && ctx.user.role !== "manager") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const access = await loadAccess(ctx);
+  if (!can(access, "view_reports")) {
+    return NextResponse.json({ error: "You do not have permission to view reports." }, { status: 403 });
   }
   const companyId = ctx.company!.id;
   const tz = ctx.settings?.timezone ?? "UTC";
-  const isAdmin = ctx.user.role === "company_admin";
+  const isAdmin = access.isAdmin;
 
   const url = new URL(req.url);
   const period = (url.searchParams.get("period") || "monthly") as Period;
@@ -61,14 +63,9 @@ export async function GET(req: Request) {
     .select()
     .from(employees)
     .innerJoin(users, eq(employees.userId, users.id))
-    .where(eq(employees.companyId, companyId));
-  const scopeIds = isAdmin
-    ? null
-    : new Set(
-        empRows
-          .filter((r) => r.employees.managerId === ctx.employee?.id || r.employees.id === ctx.employee?.id)
-          .map((r) => r.employees.id)
-      );
+    .where(and(eq(employees.companyId, companyId), eq(users.role, "employee")));
+  // Managers see their team only; admins see everyone (null = no filter).
+  const scopeIds = isAdmin ? null : await visibleEmployeeIds(ctx, access);
   if (!isAdmin && (report === "salary" || report === "deduction")) {
     return NextResponse.json({ error: "Salary reports are available to company admins only." }, { status: 403 });
   }
@@ -82,10 +79,26 @@ export async function GET(req: Request) {
   let rows: Record<string, unknown>[] = [];
 
   if (report === "attendance" || report === "late") {
+    // Only the columns the report uses, and only the people this viewer may see (never photo data).
     const records = await db
-      .select()
+      .select({
+        employeeId: attendance.employeeId,
+        workDate: attendance.workDate,
+        punchInTime: attendance.punchInTime,
+        punchOutTime: attendance.punchOutTime,
+        status: attendance.status,
+        earlyLeaveMinutes: attendance.earlyLeaveMinutes,
+        overtimeMinutes: attendance.overtimeMinutes,
+      })
       .from(attendance)
-      .where(and(eq(attendance.companyId, companyId), gte(attendance.workDate, start), lt(attendance.workDate, end)))
+      .where(
+        and(
+          eq(attendance.companyId, companyId),
+          gte(attendance.workDate, start),
+          lt(attendance.workDate, end),
+          scopeIds ? (scopeIds.size ? inArray(attendance.employeeId, [...scopeIds]) : sql`false`) : undefined
+        )
+      )
       .orderBy(asc(attendance.workDate));
     const filtered = records.filter((r) => inScope(r.employeeId) && (!employeeId || r.employeeId === employeeId));
     for (const r of filtered) {

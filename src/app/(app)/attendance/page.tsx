@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { api, useMe } from "@/lib/client";
+import { api, hasPower, useMe } from "@/lib/client";
 import { Badge, Button, Card, EmptyState, Input, Modal, PageHeader, Select, Spinner } from "@/components/ui";
 import PunchCard from "@/components/PunchCard";
 import { formatDate, formatDayKey, formatTime, workingHours } from "@/lib/utils";
@@ -51,7 +51,8 @@ function statusTone(status: string): "green" | "amber" | "red" | "slate" {
   return status === "present" ? "green" : status === "late" ? "amber" : status === "half_day" ? "red" : "slate";
 }
 
-function Photos({ record }: { record: AttendanceRow }) {
+function Photos({ record, allowed }: { record: AttendanceRow; allowed: boolean }) {
+  if (!allowed) return <span className="text-xs text-slate-300">Restricted</span>;
   return (
     <div className="flex gap-1.5">
       {record.hasPunchInPhoto ? (
@@ -70,6 +71,9 @@ export default function AttendancePage() {
   const { me, loading: meLoading } = useMe();
   const isAdmin = me?.user.role === "company_admin";
   const isManager = me?.user.role === "manager";
+  const canViewAll = isAdmin || isManager;
+  const canManage = hasPower(me, "manage_attendance");
+  const canSeePhotos = hasPower(me, "view_photos");
 
   // Empty = the current salary cycle (the server decides which cycle that is).
   const [month, setMonth] = useState("");
@@ -87,7 +91,7 @@ export default function AttendancePage() {
     try {
       const qs = new URLSearchParams();
       if (month) qs.set("month", month);
-      if (isAdmin && employeeId) qs.set("employeeId", employeeId);
+      if (canViewAll && employeeId) qs.set("employeeId", employeeId);
       const data = await api<{ records: AttendanceRow[]; period?: { start: string; end: string } }>(`/api/attendance?${qs}`);
       setRecords(data.records);
       setPeriod(data.period ?? null);
@@ -97,21 +101,20 @@ export default function AttendancePage() {
     } finally {
       setLoading(false);
     }
-  }, [month, employeeId, isAdmin]);
+  }, [month, employeeId, canViewAll]);
 
   useEffect(() => {
     if (!meLoading) void load();
   }, [load, meLoading]);
 
   useEffect(() => {
-    if (isAdmin && employees.length === 0) {
+    if (canViewAll && employees.length === 0) {
       api<{ employees: EmployeeOption[] }>("/api/employees")
         .then((d) => setEmployees(d.employees))
         .catch(() => setEmployees([]));
     }
-  }, [isAdmin, employees.length]);
+  }, [canViewAll, employees.length]);
 
-  const canViewAll = isAdmin || isManager;
   const counts = {
     present: records.filter((r) => r.status === "present").length,
     late: records.filter((r) => r.status === "late").length,
@@ -139,7 +142,7 @@ export default function AttendancePage() {
               </p>
             )}
           </div>
-          {isAdmin && (
+          {canViewAll && (
             <Select
               label="Employee"
               value={employeeId}
@@ -189,7 +192,7 @@ export default function AttendancePage() {
                   <th className="px-4 py-3 font-semibold">Hours</th>
                   <th className="px-4 py-3 font-semibold">Status</th>
                   <th className="px-4 py-3 font-semibold">Photos</th>
-                  {isAdmin && <th className="px-4 py-3 font-semibold">Action</th>}
+                  {canManage && <th className="px-4 py-3 font-semibold">Action</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
@@ -204,8 +207,8 @@ export default function AttendancePage() {
                     <td className="px-4 py-3 text-slate-600">{formatTime(r.punchOutTime)}<TimeNotes r={r} /></td>
                     <td className="px-4 py-3 text-slate-600">{workingHours(r.punchInTime, r.punchOutTime)}</td>
                     <td className="px-4 py-3"><Badge tone={statusTone(r.status)}>{r.status.replace("_", " ")}</Badge></td>
-                    <td className="px-4 py-3"><Photos record={r} /></td>
-                    {isAdmin && (
+                    <td className="px-4 py-3"><Photos record={r} allowed={canSeePhotos} /></td>
+                    {canManage && (
                       <td className="px-4 py-3">
                         <Button size="sm" variant="secondary" onClick={() => setEditing(r)}>Edit</Button>
                       </td>
@@ -246,8 +249,8 @@ export default function AttendancePage() {
                   </div>
                 </div>
                 <div className="mt-3 flex items-center justify-between">
-                  <Photos record={r} />
-                  {isAdmin && (
+                  <Photos record={r} allowed={canSeePhotos} />
+                  {canManage && (
                     <Button size="sm" variant="secondary" onClick={() => setEditing(r)}>Edit</Button>
                   )}
                 </div>
@@ -268,7 +271,22 @@ function EditModal({ record, onClose, onSaved }: { record: AttendanceRow; onClos
   const [status, setStatus] = useState(record.status);
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const [error, setError] = useState("");
+
+  const remove = async () => {
+    if (reason.trim().length < 3) return setError("Enter a reason before removing this record (it is kept in the audit log).");
+    if (!window.confirm("Remove this attendance record? Its punches will no longer count for pay.")) return;
+    setRemoving(true);
+    setError("");
+    try {
+      await api(`/api/attendance/${record.id}`, { method: "DELETE", body: JSON.stringify({ reason }) });
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not remove the record");
+      setRemoving(false);
+    }
+  };
 
   const save = async () => {
     setSaving(true);
@@ -311,6 +329,9 @@ function EditModal({ record, onClose, onSaved }: { record: AttendanceRow; onClos
         <div className="flex gap-2 pt-1">
           <Button variant="secondary" className="flex-1" onClick={onClose}>Cancel</Button>
           <Button className="flex-1" onClick={save} loading={saving}>Save Changes</Button>
+        </div>
+        <div className="border-t border-slate-100 pt-3">
+          <Button variant="danger" className="w-full" onClick={remove} loading={removing}>Remove this attendance record</Button>
         </div>
         <p className="text-[11px] text-slate-400">All changes are recorded in the audit trail with your name and reason.</p>
       </div>

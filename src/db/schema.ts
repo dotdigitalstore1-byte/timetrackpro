@@ -50,6 +50,8 @@ export const users = pgTable("users", {
   passwordHash: text("password_hash").notNull(),
   fullName: varchar("full_name", { length: 200 }).notNull(),
   role: varchar("role", { length: 20 }).notNull().default("employee"), // super_admin | company_admin | manager | employee
+  // Manager powers granted by the company admin (see src/lib/access.ts). Empty for every other role.
+  managerPermissions: jsonb("manager_permissions").$type<string[]>().notNull().default([]),
   phone: varchar("phone", { length: 50 }),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -228,6 +230,27 @@ export const employeeDepartments = pgTable(
   ]
 );
 
+// Departments and work locations a manager is responsible for. Many managers can share one department.
+export const managerDepartments = pgTable(
+  "manager_departments",
+  {
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    departmentId: uuid("department_id").notNull().references(() => departments.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.departmentId] }), index("manager_departments_department_idx").on(t.departmentId)]
+);
+
+export const managerLocations = pgTable(
+  "manager_locations",
+  {
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    locationId: uuid("location_id").notNull().references(() => geofences.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.locationId] }), index("manager_locations_location_idx").on(t.locationId)]
+);
+
 export const employeeLocations = pgTable(
   "employee_locations",
   {
@@ -319,7 +342,10 @@ export const leaveRequests = pgTable(
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("leave_requests_company_employee_idx").on(t.companyId, t.employeeId)]
+  (t) => [
+    index("leave_requests_company_employee_idx").on(t.companyId, t.employeeId),
+    index("leave_requests_company_status_idx").on(t.companyId, t.status),
+  ]
 );
 
 export const salaryRecords = pgTable(

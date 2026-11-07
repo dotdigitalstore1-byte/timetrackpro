@@ -55,20 +55,19 @@ export default function ReportsPage() {
   }, [load]);
 
   useEffect(() => {
-    if (isAdmin && employees.length === 0) {
+    // Filters for admins and for managers with view_reports (the server limits managers to their team).
+    if (employees.length === 0) {
       api<{ employees: { id: string; fullName: string }[] }>("/api/employees")
         .then((d) => setEmployees(d.employees))
         .catch(() => setEmployees([]));
     }
-  }, [isAdmin, employees.length]);
+  }, [employees.length]);
 
   useEffect(() => {
-    if (isAdmin) {
-      api<{ departments: { id: string; name: string }[] }>("/api/departments")
-        .then((d) => setDepartments(d.departments))
-        .catch(() => setDepartments([]));
-    }
-  }, [isAdmin]);
+    api<{ departments: { id: string; name: string }[] }>("/api/departments")
+      .then((d) => setDepartments(d.departments))
+      .catch(() => setDepartments([]));
+  }, []);
 
   const exportCSV = async () => {
     setExporting("csv");
@@ -149,8 +148,7 @@ export default function ReportsPage() {
               { value: "attendance", label: "Attendance" },
               { value: "late", label: "Late Attendance" },
               { value: "leave", label: "Leaves" },
-              { value: "salary", label: "Salary" },
-              { value: "deduction", label: "Deductions" },
+              ...(isAdmin ? [{ value: "salary", label: "Salary" }, { value: "deduction", label: "Deductions" }] : []),
             ]}
           />
           <Select
@@ -165,22 +163,18 @@ export default function ReportsPage() {
             ]}
           />
           <Input label="Date (period anchor)" type="date" value={date} onChange={setDate} />
-          {isAdmin && (
-            <Select
-              label="Department"
-              value={departmentId}
-              onChange={setDepartmentId}
-              options={[{ value: "", label: "All departments" }, ...departments.map((d) => ({ value: d.id, label: d.name }))]}
-            />
-          )}
-          {isAdmin && (
-            <Select
-              label="Employee"
-              value={employeeId}
-              onChange={setEmployeeId}
-              options={[{ value: "", label: "All employees" }, ...employees.map((e) => ({ value: e.id, label: e.fullName }))]}
-            />
-          )}
+          <Select
+            label="Department"
+            value={departmentId}
+            onChange={setDepartmentId}
+            options={[{ value: "", label: "All departments" }, ...departments.map((d) => ({ value: d.id, label: d.name }))]}
+          />
+          <Select
+            label="Employee"
+            value={employeeId}
+            onChange={setEmployeeId}
+            options={[{ value: "", label: "All employees" }, ...employees.map((e) => ({ value: e.id, label: e.fullName }))]}
+          />
         </div>
       </Card>
 

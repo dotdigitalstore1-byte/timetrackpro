@@ -149,3 +149,34 @@ npx cap sync && npx cap open android      # or: npx cap open ios
 * Authentication is a same-site session cookie, which works when the shell loads your own HTTPS domain. If you later
   want a fully offline/bundled app, switch the APIs to token auth first.
 * Store review needs a privacy policy that mentions photo + GPS collection.
+
+## Roles, managers and permissions
+
+* **Company admin** runs the company: employees, managers, departments, locations, rules, salary, reports and all
+  attendance. Admins do not punch in or request leave; they are not counted as employees.
+* **Manager** is created by the admin on the **Managers** page. Each manager gets one or more **departments** and
+  **work locations** (one department can have several managers). Their team is the employees in those departments;
+  if the manager has locations, the team is limited to employees with no location or one of the manager's locations.
+  The admin switches on the powers each manager needs:
+  * *Approve or reject leave* (Level 1 when two approval levels are on; the admin still gives the final approval)
+  * *Edit and remove attendance* (every change and removal is written to the audit log)
+  * *Add and edit team members* (within their own departments and locations; salary, password and login status stay with admins)
+  * *View punch photos* (Photo audit, team only)
+  * *View and export reports* (team only)
+  * *View team salary* (read only; only admins calculate, finalise or pay)
+* **Employee** punches in and out, requests leave and sees their own salary.
+
+Every rule above is enforced by the API (`src/lib/access.ts`); the menus only reflect it.
+
+Run `migrations/2026-11-managers-and-access.sql` once. It moves existing managers to the new model: their own and their
+reports' departments and locations are copied across, and they keep the powers they had before (approve leave,
+view photos and reports). Review the Managers page after migrating.
+
+## Dashboard
+
+The home screen is served by one endpoint, `/api/dashboard`, scoped to what the viewer may see. It shows today's
+presence (present, clocked in now, absent, on leave, late, half day, pending approvals), the salary cycle so far
+(late marks, half days, absent and leave days, counted the same way as payroll), pending approvals with names, and
+for admins the setup gaps (employees without a department or location, managers without a department).
+Salary totals are on the Salary page.
+

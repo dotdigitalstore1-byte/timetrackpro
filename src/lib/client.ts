@@ -2,7 +2,23 @@
 
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 
+export interface PermissionInfo {
+  key: string;
+  label: string;
+  description: string;
+}
+
+export interface AccessData {
+  isAdmin: boolean;
+  isManager: boolean;
+  permissions: string[];
+  permissionCatalog: PermissionInfo[];
+  departmentIds: string[];
+  locationIds: string[];
+}
+
 export interface MeData {
+  access: AccessData;
   user: {
     id: string;
     email: string;
@@ -45,6 +61,12 @@ export interface MeData {
     basicSalary: string;
     managerId: string | null;
   } | null;
+}
+
+/** Does the signed-in user hold this power? Admins hold every power; managers hold what the admin granted. */
+export function hasPower(me: MeData | null | undefined, permission: string): boolean {
+  if (!me) return false;
+  return me.access.isAdmin || (me.access.isManager && me.access.permissions.includes(permission));
 }
 
 export class ApiError extends Error {

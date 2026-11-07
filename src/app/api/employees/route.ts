@@ -3,6 +3,7 @@ import { and, asc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLogs, employees, users } from "@/db/schema";
 import { getAuth, hashPassword } from "@/lib/auth";
+import { can, loadAccess, visibleEmployeeIds } from "@/lib/access";
 import { shiftOf } from "@/lib/company";
 import { loadEmployeeOrg, parseIdList, replaceEmployeeOrg, validateOrgIds } from "@/lib/org";
 import { isValidHHMM, parseHHMM } from "@/lib/payroll";
@@ -10,44 +11,21 @@ import { isValidHHMM, parseHHMM } from "@/lib/payroll";
 export async function GET() {
   const ctx = await getAuth();
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (ctx.user.role === "super_admin" || ctx.user.role === "employee") {
+  const access = await loadAccess(ctx);
+  if (access.isEmployee || ctx.user.role === "super_admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   const companyId = ctx.company!.id;
+  // Admin: all employee accounts. Manager: their team only. Admins and managers are listed on the Managers page.
+  const visible = await visibleEmployeeIds(ctx, access);
+  const allRows = await db
+    .select()
+    .from(employees)
+    .innerJoin(users, eq(employees.userId, users.id))
+    .where(eq(employees.companyId, companyId))
+    .orderBy(asc(users.fullName));
+  const empRows = allRows.filter((r) => visible.has(r.employees.id));
 
-  let empRows;
-  if (ctx.user.role === "manager") {
-    const managed = await db
-      .select()
-      .from(employees)
-      .where(and(eq(employees.companyId, companyId), eq(employees.managerId, ctx.employee!.id)));
-    const ids = [...new Set([...managed.map((m) => m.id), ctx.employee!.id])];
-    empRows = await db
-      .select()
-      .from(employees)
-      .innerJoin(users, eq(employees.userId, users.id))
-      .where(and(eq(employees.companyId, companyId), inArray(employees.id, ids)))
-      .orderBy(asc(users.fullName));
-  } else {
-    empRows = await db
-      .select()
-      .from(employees)
-      .innerJoin(users, eq(employees.userId, users.id))
-      .where(eq(employees.companyId, companyId))
-      .orderBy(asc(users.fullName));
-  }
-
-  // Manager names
-  const managerIds = [...new Set(empRows.map((r) => r.employees.managerId).filter(Boolean))] as string[];
-  const managerRows = managerIds.length
-    ? await db
-        .select()
-        .from(employees)
-        .innerJoin(users, eq(employees.userId, users.id))
-        .where(inArray(employees.id, managerIds))
-    : [];
-
-  const managerNameById = new Map(managerRows.map((r) => [r.employees.id, r.users.fullName]));
   const orgByEmployee = await loadEmployeeOrg(empRows.map((r) => r.employees.id));
 
   return NextResponse.json({
@@ -70,10 +48,8 @@ export async function GET() {
       shiftStart: ctx.settings ? shiftOf(ctx.settings, r.employees).start : r.employees.shiftStart,
       shiftEnd: ctx.settings ? shiftOf(ctx.settings, r.employees).end : r.employees.shiftEnd,
       // salary is confidential: managers never receive it
-      basicSalary: ctx.user.role === "company_admin" ? r.employees.basicSalary : null,
+      basicSalary: access.isAdmin ? r.employees.basicSalary : null,
       hireDate: r.employees.hireDate,
-      managerId: r.employees.managerId,
-      managerName: r.employees.managerId ? managerNameById.get(r.employees.managerId) : null,
     })),
   });
 }
@@ -81,16 +57,20 @@ export async function GET() {
 export async function POST(req: Request) {
   const ctx = await getAuth();
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (ctx.user.role !== "company_admin") {
-    return NextResponse.json({ error: "Only company admins can add employees." }, { status: 403 });
+  const access = await loadAccess(ctx);
+  if (!can(access, "manage_employees")) {
+    return NextResponse.json({ error: "You do not have permission to add employees." }, { status: 403 });
   }
   const companyId = ctx.company!.id;
 
   const body = await req.json();
+  if (body.role !== undefined && body.role !== "employee") {
+    return NextResponse.json({ error: "Create managers from the Managers page." }, { status: 400 });
+  }
   const fullName = String(body.fullName || "").trim();
   const email = String(body.email || "").trim().toLowerCase();
   const password = String(body.password || "");
-  const role = body.role === "manager" ? "manager" : "employee";
+  const role = "employee";
   const employeeCode = String(body.employeeCode || "").trim();
   const departmentIds = parseIdList(body.departmentIds);
   const locationIds = parseIdList(body.locationIds);
@@ -105,8 +85,11 @@ export async function POST(req: Request) {
   if (parseHHMM(shiftEnd) <= parseHHMM(shiftStart)) {
     return NextResponse.json({ error: "Punch-out time must be later than punch-in time." }, { status: 400 });
   }
-  const basicSalary = String(Number(body.basicSalary) || "0");
-  const managerId = body.managerId ? String(body.managerId) : null;
+  // Salary is set by admins only; a manager-created employee starts at 0 until an admin sets it.
+  if (!access.isAdmin && Number(body.basicSalary) > 0) {
+    return NextResponse.json({ error: "Only company admins can set a salary." }, { status: 403 });
+  }
+  const basicSalary = access.isAdmin ? String(Number(body.basicSalary) || "0") : "0";
   const phone = String(body.phone || "").trim();
 
   if (!fullName || !email || password.length < 8) {
@@ -127,9 +110,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "A user with this email already exists." }, { status: 409 });
   }
 
-  if (managerId) {
-    const m = await db.select({ id: employees.id }).from(employees).where(and(eq(employees.id, managerId), eq(employees.companyId, companyId))).limit(1);
-    if (!m[0]) return NextResponse.json({ error: "Selected manager was not found in your company." }, { status: 400 });
+  // A manager can only add people to departments and locations they are responsible for.
+  if (!access.isAdmin) {
+    if (!departmentIds.every((d) => access.departmentIds.includes(d))) {
+      return NextResponse.json({ error: "You can only add people to departments you manage." }, { status: 403 });
+    }
+    if (access.locationIds.length > 0 && !locationIds.every((l) => access.locationIds.includes(l))) {
+      return NextResponse.json({ error: "You can only add people to work locations you manage." }, { status: 403 });
+    }
   }
   const hireDate = body.hireDate ? new Date(body.hireDate) : new Date();
   if (Number.isNaN(hireDate.getTime())) return NextResponse.json({ error: "Invalid hire date." }, { status: 400 });
@@ -144,7 +132,7 @@ export async function POST(req: Request) {
 
       const [emp] = await tx
         .insert(employees)
-        .values({ companyId, userId: user.id, employeeCode, designation, shiftStart, shiftEnd, basicSalary, managerId, hireDate })
+        .values({ companyId, userId: user.id, employeeCode, designation, shiftStart, shiftEnd, basicSalary, hireDate })
         .returning();
 
       await replaceEmployeeOrg(tx, emp.id, departmentIds, locationIds);
@@ -155,7 +143,7 @@ export async function POST(req: Request) {
         action: "employee.create",
         entity: "employee",
         entityId: emp.id,
-        details: { fullName, email, role, designation, shiftStart, shiftEnd, basicSalary, departmentIds, locationIds },
+        details: { fullName, email, role, designation, shiftStart, shiftEnd, basicSalary, departmentIds, locationIds, createdByRole: ctx.user.role },
       });
       return emp.id;
     });

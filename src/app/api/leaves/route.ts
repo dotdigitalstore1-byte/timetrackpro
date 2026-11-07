@@ -3,6 +3,7 @@ import { and, desc, eq, gte, inArray, lt, lte } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLogs, employees, leaveRequests, users } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
+import { loadAccess, visibleEmployeeIds } from "@/lib/access";
 import { holidayKeys, weeklyOffOf } from "@/lib/company";
 import { countWorkdaysBetween, leaveCredits, localWorkDate, type LeaveAccrualMode } from "@/lib/payroll";
 
@@ -17,19 +18,9 @@ export async function GET() {
   const companyId = ctx.company!.id;
   const tz = ctx.settings?.timezone ?? "UTC";
 
-  let employeeIds: string[];
-  if (ctx.user.role === "company_admin") {
-    const all = await db.select({ id: employees.id }).from(employees).where(eq(employees.companyId, companyId));
-    employeeIds = all.map((e) => e.id);
-  } else if (ctx.user.role === "manager") {
-    const managed = await db
-      .select({ id: employees.id })
-      .from(employees)
-      .where(and(eq(employees.companyId, companyId), eq(employees.managerId, ctx.employee!.id)));
-    employeeIds = [...new Set([...managed.map((m) => m.id), ctx.employee!.id])];
-  } else {
-    employeeIds = ctx.employee ? [ctx.employee.id] : [];
-  }
+  // Admin: every employee. Manager: their team. Employee: themselves.
+  const access = await loadAccess(ctx);
+  const employeeIds = [...(await visibleEmployeeIds(ctx, access))];
 
   // Leave balance for the signed-in employee. Leave accrues one day per month from the joining month:
   //  - carry: the whole accrued balance (this calendar year) can be used

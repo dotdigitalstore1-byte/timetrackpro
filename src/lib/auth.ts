@@ -72,7 +72,8 @@ export async function getAuth(): Promise<AuthContext | null> {
   const [comp, sets, emp] = await Promise.all([
     db.select().from(companies).where(eq(companies.id, user.companyId)).limit(1),
     db.select().from(companySettings).where(eq(companySettings.companyId, user.companyId)).limit(1),
-    user.role === "super_admin"
+    // Only employee accounts have an employee profile (punching, leave, salary). Admins and managers supervise.
+    user.role !== "employee"
       ? Promise.resolve([] as Employee[])
       : db.select().from(employees).where(eq(employees.userId, user.id)).limit(1),
   ]);

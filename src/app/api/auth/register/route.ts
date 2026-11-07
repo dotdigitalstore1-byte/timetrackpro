@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { companies, companySettings, employees, subscriptions, users } from "@/db/schema";
+import { companies, companySettings, subscriptions, users } from "@/db/schema";
 import { hashPassword, createSession, setSessionCookie } from "@/lib/auth";
 import { clientIp, isRateLimited } from "@/lib/rate-limit";
 import { isValidTimezone } from "@/lib/payroll";
@@ -54,12 +54,6 @@ export async function POST(req: Request) {
       })
       .returning();
 
-    await db.insert(employees).values({
-      companyId,
-      userId: admin[0].id,
-      designation: "Administrator",
-      basicSalary: "0",
-    });
 
     const token = await createSession(admin[0].id);
     await setSessionCookie(token);
