@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, hasPower, useMe } from "@/lib/client";
-import { Badge, Button, Card, Input, PageHeader, Spinner } from "@/components/ui";
+import { Badge, Button, Card, Input, PageHeader, Select, Spinner } from "@/components/ui";
 import { formatDate, formatDayKey, formatNumber, monthLabel } from "@/lib/utils";
 
 interface SalaryData {
@@ -10,6 +10,7 @@ interface SalaryData {
   month: number;
   year: number;
   period: { start: string; end: string };
+  cycles: { key: string; start: string; end: string }[];
   payDate: string;
   status: "preview" | "draft" | "finalized" | "paid";
   frozen: boolean;
@@ -172,7 +173,15 @@ export default function SalaryPage() {
 
       <Card className="mb-4">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Input label="Salary cycle (month it ends in)" type="month" value={month} onChange={setMonth} />
+          <Select
+            label="Salary cycle"
+            value={month || data?.cycles?.[0]?.key || ""}
+            onChange={setMonth}
+            options={(data?.cycles ?? []).map((c) => ({
+              value: c.key,
+              label: `${formatDayKey(c.start)} – ${formatDayKey(c.end)}${data?.cycles?.[0]?.key === c.key ? " (current)" : ""}`,
+            }))}
+          />
           {canPick && (
             <label className="block">
               <span className="mb-1 block text-xs font-semibold text-slate-600">Employee</span>
@@ -218,7 +227,7 @@ export default function SalaryPage() {
         <>
           <div className="mb-4 rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 p-5 text-white">
             <div className="flex items-start justify-between gap-2">
-              <p className="text-sm text-indigo-100">{data.employee?.fullName} · {data.employee?.designation || "Employee"} · {monthLabel(data.year, data.month)}</p>
+              <p className="text-sm text-indigo-100">{data.employee?.fullName} · {data.employee?.designation || "Employee"} · {formatDayKey(data.period.start)} – {formatDayKey(data.period.end)}</p>
               <Badge tone={STATUS_TONE[data.status] ?? "slate"}>{data.status === "preview" ? "live preview" : data.status}</Badge>
             </div>
             <p className="mt-1 text-3xl font-bold">{currency}{formatNumber(b.netPayable)}</p>

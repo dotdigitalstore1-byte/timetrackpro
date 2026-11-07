@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, hasPower, useMe } from "@/lib/client";
 import { Badge, Button, Card, EmptyState, Input, Modal, PageHeader, Select, Spinner } from "@/components/ui";
-import PunchCard from "@/components/PunchCard";
 import { formatDate, formatDayKey, formatTime, workingHours } from "@/lib/utils";
+import { attendanceCounts } from "@/lib/attendance-stats";
 
 interface AttendanceRow {
   id: string;
@@ -115,22 +115,13 @@ export default function AttendancePage() {
     }
   }, [canViewAll, employees.length]);
 
-  const counts = {
-    present: records.filter((r) => r.status === "present").length,
-    late: records.filter((r) => r.status === "late").length,
-    half: records.filter((r) => r.status === "half_day").length,
-    absent: records.filter((r) => r.status === "absent" || !r.punchInTime).length,
-  };
+  // Same counts as the Home page (src/lib/attendance-stats.ts), so the two always match.
+  const counts = attendanceCounts(records);
 
   return (
     <div>
       <PageHeader title="Attendance" subtitle="Photo-verified punches with GPS geofencing" />
 
-      {me?.employee && !isAdmin && (
-        <div className="mb-5">
-          <PunchCard onChanged={load} />
-        </div>
-      )}
 
       <Card className="mb-4">
         <div className={`grid gap-3 ${isAdmin ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1"}`}>

@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { auditLogs, employees, salaryRecords, users } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
 import { can, canSeeEmployee, loadAccess } from "@/lib/access";
-import { addDays, currentCycleKey, cyclePeriod, dateKey, localWorkDate } from "@/lib/payroll";
+import { addDays, currentCycleKey, cyclePeriod, dateKey, localWorkDate, recentCycles } from "@/lib/payroll";
 import { computeMonth, finalizeMonth, releaseHold, saveDraft } from "@/lib/salary";
 
 /** The requested cycle ("YYYY-MM", named by the month it ends in), or the cycle that contains today. */
@@ -78,6 +78,12 @@ export async function GET(req: Request) {
     month,
     year,
     period: { start: dateKey(c.period.start), end: dateKey(c.period.end) },
+    // the last 12 salary cycles, newest first, for the cycle picker
+    cycles: recentCycles(localWorkDate(new Date(), tz), cycleStartDay, 12).map((k) => ({
+      key: k.key,
+      start: dateKey(k.start),
+      end: dateKey(k.end),
+    })),
     payDate: dateKey(addDays(c.period.end, ctx.settings?.salaryPayDelayDays ?? 0)),
     status: c.record?.status ?? "preview", // preview (not saved) | draft | finalized | paid
     frozen: c.frozen,

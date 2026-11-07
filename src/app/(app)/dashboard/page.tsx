@@ -6,7 +6,8 @@ import Link from "next/link";
 import { api, useMe } from "@/lib/client";
 import { Badge, Button, Card, EmptyState, ErrorBanner, PageHeader, Spinner, StatCard } from "@/components/ui";
 import PunchCard from "@/components/PunchCard";
-import { formatDate, formatNumber, monthLabel } from "@/lib/utils";
+import { formatDate, formatDayKey, formatNumber, monthLabel } from "@/lib/utils";
+import { attendanceCounts } from "@/lib/attendance-stats";
 
 interface AttendanceRow {
   id: string;
@@ -32,6 +33,7 @@ interface LeaveRow {
 interface SalaryData {
   month: number;
   year: number;
+  period?: { start: string; end: string };
   breakdown: {
     basicSalary: number;
     attendanceSalary: number;
@@ -155,6 +157,7 @@ export default function DashboardPage() {
 function EmployeeDashboard() {
   const { me } = useMe();
   const [records, setRecords] = useState<AttendanceRow[]>([]);
+  const [cyclePeriod, setCyclePeriod] = useState<{ start: string; end: string } | null>(null);
   const [leaves, setLeaves] = useState<LeaveRow[]>([]);
   const [salary, setSalary] = useState<SalaryData | null>(null);
   const [balance, setBalance] = useState<LeaveBalance | null>(null);
@@ -165,11 +168,12 @@ function EmployeeDashboard() {
     setError("");
     try {
       const [att, lv, sal] = await Promise.all([
-        api<{ records: AttendanceRow[] }>(`/api/attendance`),
+        api<{ records: AttendanceRow[]; period?: { start: string; end: string } }>(`/api/attendance`),
         api<{ leaves: LeaveRow[]; balance: LeaveBalance | null }>("/api/leaves"),
         api<SalaryData>(`/api/salary`),
       ]);
       setRecords(att.records);
+      setCyclePeriod(att.period ?? null);
       setLeaves(lv.leaves);
       setBalance(lv.balance);
       setSalary(sal);
@@ -184,10 +188,8 @@ function EmployeeDashboard() {
     void load();
   }, [load]);
 
-  const present = records.filter((r) => r.punchInTime && r.status !== "half_day").length;
-  const half = records.filter((r) => r.status === "half_day").length;
-  const late = records.filter((r) => r.status === "late").length;
-  const absent = records.filter((r) => !r.punchInTime).length;
+  // Same counts as the Attendance page (src/lib/attendance-stats.ts).
+  const counts = attendanceCounts(records);
 
   return (
     <div>
@@ -199,23 +201,26 @@ function EmployeeDashboard() {
         </div>
         <div className="space-y-4">
           <Card>
-            <h3 className="mb-3 font-bold text-slate-900">This Month</h3>
+            <h3 className="font-bold text-slate-900">This Salary Cycle</h3>
+            <p className="mb-3 text-xs text-slate-500">
+              {cyclePeriod ? `${formatDayKey(cyclePeriod.start)} – ${formatDayKey(cyclePeriod.end)}` : "Current cycle"}
+            </p>
             <div className="grid grid-cols-2 gap-2">
               <div className="rounded-xl bg-emerald-50 p-3 text-center">
-                <p className="text-xl font-bold text-emerald-700">{present + half}</p>
+                <p className="text-xl font-bold text-emerald-700">{counts.present}</p>
                 <p className="text-[10px] font-bold uppercase text-emerald-600">Present</p>
               </div>
               <div className="rounded-xl bg-amber-50 p-3 text-center">
-                <p className="text-xl font-bold text-amber-700">{late}</p>
+                <p className="text-xl font-bold text-amber-700">{counts.late}</p>
                 <p className="text-[10px] font-bold uppercase text-amber-600">Late</p>
               </div>
               <div className="rounded-xl bg-rose-50 p-3 text-center">
-                <p className="text-xl font-bold text-rose-700">{absent}</p>
-                <p className="text-[10px] font-bold uppercase text-rose-600">Absent</p>
+                <p className="text-xl font-bold text-rose-700">{counts.half}</p>
+                <p className="text-[10px] font-bold uppercase text-rose-600">Half day</p>
               </div>
-              <div className="rounded-xl bg-indigo-50 p-3 text-center">
-                <p className="text-xl font-bold text-indigo-700">{half}</p>
-                <p className="text-[10px] font-bold uppercase text-indigo-600">Half Days</p>
+              <div className="rounded-xl bg-slate-100 p-3 text-center">
+                <p className="text-xl font-bold text-slate-600">{counts.absent}</p>
+                <p className="text-[10px] font-bold uppercase text-slate-500">No punch</p>
               </div>
             </div>
           </Card>
@@ -235,14 +240,14 @@ function EmployeeDashboard() {
             )}
           </Card>
           <Card>
-            <h3 className="mb-2 font-bold text-slate-900">Current Salary</h3>
+            <h3 className="mb-2 font-bold text-slate-900">Salary This Cycle</h3>
             {salary ? (
               <>
                 <p className="text-2xl font-bold text-emerald-600">
                   {me?.settings?.currency ?? "$"}
                   {formatNumber(salary.breakdown.netPayable)}
                 </p>
-                <p className="text-xs text-slate-500">{monthLabel(salary.year, salary.month)} · net payable</p>
+                <p className="text-xs text-slate-500">{salary.period ? `${formatDayKey(salary.period.start)} – ${formatDayKey(salary.period.end)}` : monthLabel(salary.year, salary.month)} · net payable</p>
                 <div className="mt-2 space-y-1 text-xs text-slate-500">
                   <p className="flex justify-between"><span>Attendance salary</span><span>{me?.settings?.currency}{formatNumber(salary.breakdown.attendanceSalary)}</span></p>
                   <p className="flex justify-between"><span>Deductions</span><span className="text-rose-600">-{me?.settings?.currency}{formatNumber(salary.breakdown.totalDeductions)}</span></p>
@@ -286,7 +291,7 @@ function EmployeeDashboard() {
             <Link href="/attendance" className="text-xs font-semibold text-indigo-600 hover:underline">View all →</Link>
           </div>
           {records.length === 0 ? (
-            <EmptyState message="No attendance records this month." />
+            <EmptyState message="No attendance records in this salary cycle." />
           ) : (
             <div className="space-y-2">
               {records.slice(0, 5).map((r) => (

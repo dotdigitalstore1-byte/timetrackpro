@@ -293,6 +293,12 @@ export function summarizeMonth(args: {
       }
       continue;
     }
+    // A half day entered directly (no punches) is still a half day, never an absence.
+    if (rec?.status === "half_day") {
+      inBlock = false;
+      out.halfDays += 1;
+      continue;
+    }
     const onLeave = args.approvedLeaves.some(
       (l) => day.getTime() >= l.start.getTime() && day.getTime() <= l.end.getTime()
     );
@@ -307,6 +313,20 @@ export function summarizeMonth(args: {
       out.unapprovedOccurrences.push(day);
       inBlock = true;
     }
+  }
+
+  // Half days recorded on a weekly off or a holiday are real half days: they deduct and show in the counts.
+  // (Full-day work on those days is not counted here; it earns comp-off below.)
+  const holidaySet = args.holidays ?? new Set<string>();
+  for (let t = period.start.getTime(); t <= period.end.getTime(); t += 86400000) {
+    const d = new Date(t);
+    const isOff = args.weeklyOff.has(d.getUTCDay()) || holidaySet.has(dateKey(d));
+    if (!isOff) continue;
+    if (args.joinDate && d.getTime() < args.joinDate.getTime()) continue;
+    const rec = args.records.get(dateKey(d));
+    if (!rec) continue;
+    const missingOut = rec.hasPunchIn && rec.hasPunchOut === false && d.getTime() < args.todayLocal.getTime();
+    if (rec.status === "half_day" || missingOut) out.halfDays += 1;
   }
 
   // Work done on a weekly off (Sunday by default) earns one comp-off credit per day.
@@ -491,4 +511,24 @@ export function computeSalary(i: SalaryInput): SalaryResult {
     extraPayDays,
     extraPay: r2(extraPay),
   };
+}
+
+/** The salary cycle containing `today`, then the previous `count - 1` cycles (newest first). */
+export function recentCycles(
+  todayLocal: Date,
+  startDay: number,
+  count: number
+): { year: number; month: number; key: string; start: Date; end: Date }[] {
+  const out: { year: number; month: number; key: string; start: Date; end: Date }[] = [];
+  let { year, month } = currentCycleKey(todayLocal, startDay);
+  for (let i = 0; i < count; i++) {
+    const p = cyclePeriod(year, month, startDay);
+    out.push({ year, month, key: `${year}-${String(month).padStart(2, "0")}`, start: p.start, end: p.end });
+    month -= 1;
+    if (month === 0) {
+      month = 12;
+      year -= 1;
+    }
+  }
+  return out;
 }

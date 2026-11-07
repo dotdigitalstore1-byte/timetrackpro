@@ -119,3 +119,46 @@ test("a missed punch-out costs the half-day deduction, not a full day", () => {
   assert.equal(summary.halfDays, 1);
   assert.equal(r.halfDayDeduction, 500); // 50% of a 1,000 daily rate
 });
+
+// ------------------------------------------------- half-day counting (regression)
+
+test("two half days, one on a Sunday and one on a weekday, both deduct (2 x 250 = 500)", () => {
+  const records = new Map<string, DayRecord>([
+    ["2026-10-07", { status: "half_day", hasPunchIn: true, hasPunchOut: true, earlyLeaveMinutes: 0, overtimeMinutes: 0 }], // Wednesday
+    ["2026-10-11", { status: "half_day", hasPunchIn: true, hasPunchOut: true, earlyLeaveMinutes: 0, overtimeMinutes: 0 }], // Sunday
+  ]);
+  const s = summarizeMonth({
+    year: 2026, month: 10, weeklyOff: OFF, records, approvedLeaves: [], todayLocal: d(2026, 11, 7),
+  });
+  assert.equal(s.halfDays, 2);
+  assert.equal(s.presentDays, 0);
+  const r = computeSalary({
+    basicSalary: 15000,
+    workDaysPerMonth: SALARY_BASE_DAYS,
+    summary: s,
+    lateRule: { type: "fixed", value: 0 },
+    halfDayRule: { type: "percentage", value: 50 },
+    leaveRule: { type: "percentage", value: 100 },
+    holdDaysPerOccurrence: 2,
+    releasedHoldCount: 0,
+    otherDeductions: [],
+  });
+  assert.equal(r.halfDayDeduction, 500);
+});
+
+test("a half day entered without punches is a half day, not an absence", () => {
+  const records = new Map<string, DayRecord>([
+    ["2026-10-07", { status: "half_day", hasPunchIn: false, hasPunchOut: false }],
+  ]);
+  const s = summarizeMonth({
+    year: 2026, month: 10, weeklyOff: OFF, records, approvedLeaves: [], todayLocal: d(2026, 11, 7),
+  });
+  assert.equal(s.halfDays, 1);
+  // the same day must not also be counted as absent
+  const others = s.absentDays;
+  const without = summarizeMonth({
+    year: 2026, month: 10, weeklyOff: OFF, records: new Map(), approvedLeaves: [], todayLocal: d(2026, 11, 7),
+  });
+  assert.equal(without.absentDays - others, 1);
+});
+
