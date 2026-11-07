@@ -87,6 +87,7 @@ export async function GET(req: Request) {
         punchInTime: attendance.punchInTime,
         punchOutTime: attendance.punchOutTime,
         status: attendance.status,
+        isManual: attendance.isManual,
         earlyLeaveMinutes: attendance.earlyLeaveMinutes,
         overtimeMinutes: attendance.overtimeMinutes,
       })
