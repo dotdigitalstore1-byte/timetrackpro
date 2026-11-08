@@ -201,13 +201,15 @@ export default function SalaryPage() {
       </Card>
 
       {isAdmin && (!employeeId || rangeMode === "custom") ? (
-        <Card id="salary-detail">
-          <p className="text-center text-sm text-slate-400">
-            {rangeMode === "custom"
-              ? "Payslips are worked out for salary cycles. Switch to a salary cycle to open an employee's payslip."
-              : "Choose an employee in the table above to open their payslip, deductions and salary history."}
-          </p>
-        </Card>
+        <div id="salary-detail">
+          <Card>
+            <p className="text-center text-sm text-slate-400">
+              {rangeMode === "custom"
+                ? "Payslips are worked out for salary cycles. Switch to a salary cycle to open an employee's payslip."
+                : "Choose an employee in the table above to open their payslip, deductions and salary history."}
+            </p>
+          </Card>
+        </div>
       ) : loading ? (
         <div className="flex justify-center py-16"><Spinner /></div>
       ) : !data || !b ? (
