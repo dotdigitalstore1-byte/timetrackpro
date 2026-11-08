@@ -8,6 +8,7 @@ import { formatDate } from "@/lib/utils";
 interface LeaveRow {
   id: string;
   employeeName: string;
+  employeeCode?: string | null;
   employeeId: string;
   leaveType: string;
   startDate: string;
@@ -155,7 +156,7 @@ export default function LeavesPage() {
                   <div key={l.id} className="rounded-xl border border-slate-100 p-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
-                        <p className="font-bold text-slate-800">{l.employeeName}</p>
+                        <p className="font-bold text-slate-800">{l.employeeName}{l.employeeCode ? <span className="ml-2 font-mono text-[11px] font-normal text-slate-400">{l.employeeCode}</span> : null}</p>
                         <p className="text-sm text-slate-500">
                           {formatDate(l.startDate)} → {formatDate(l.endDate)} · {l.days} day(s)
                         </p>

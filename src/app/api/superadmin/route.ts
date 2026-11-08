@@ -110,7 +110,6 @@ export async function POST(req: Request) {
       .insert(users)
       .values({ companyId: comp[0].id, email, passwordHash: hashPassword(password), fullName: "Administrator", role: "company_admin" })
       .returning();
-    await db.insert(employees).values({ companyId: comp[0].id, userId: admin[0].id, designation: "Administrator" });
     return NextResponse.json({ ok: true, id: comp[0].id });
   }
 

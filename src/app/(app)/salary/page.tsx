@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, downloadBlob, hasPower, useMe } from "@/lib/client";
 import { Badge, Button, Card, Input, PageHeader, Select, Spinner } from "@/components/ui";
-import { formatDate, formatDayKey, formatNumber, monthLabel } from "@/lib/utils";
+import EmployeePicker from "@/components/EmployeePicker";
+import { formatDate, formatDayKey, formatNumber, monthLabel, CURRENCY } from "@/lib/utils";
 
 interface SalaryData {
   employee: { id: string; fullName: string; designation: string | null } | null;
@@ -62,14 +63,14 @@ export default function SalaryPage() {
   const isAdmin = me?.user.role === "company_admin";
   // Admins pick anyone; managers with the view_salary power pick people on their team (read only).
   const canPick = isAdmin || hasPower(me, "view_salary");
-  const currency = me?.settings?.currency ?? "$";
+  const currency = CURRENCY;
 
   const [month, setMonth] = useState(""); // empty = server decides the current month in company timezone
   const [rangeMode, setRangeMode] = useState<"cycle" | "custom">("cycle");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
   const [employeeId, setEmployeeId] = useState("");
-  const [employees, setEmployees] = useState<{ id: string; fullName: string }[]>([]);
+  const [employees, setEmployees] = useState<{ id: string; fullName: string; employeeCode?: string | null }[]>([]);
   const [data, setData] = useState<SalaryData | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
@@ -111,7 +112,7 @@ export default function SalaryPage() {
 
   useEffect(() => {
     if (canPick && employees.length === 0) {
-      api<{ employees: { id: string; fullName: string }[] }>("/api/employees")
+      api<{ employees: { id: string; fullName: string; employeeCode?: string | null }[] }>("/api/employees")
         .then((d) => setEmployees(d.employees))
         .catch(() => setEmployees([]));
     }
@@ -173,19 +174,12 @@ export default function SalaryPage() {
             }))}
           />
           {canPick && !isAdmin && (
-            <label className="block">
-              <span className="mb-1 block text-xs font-semibold text-slate-600">Employee</span>
-              <select
-                value={employeeId}
-                onChange={(e) => setEmployeeId(e.target.value)}
-                className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-indigo-500"
-              >
-                <option value="">Select employee…</option>
-                {employees.map((e) => (
-                  <option key={e.id} value={e.id}>{e.fullName}</option>
-                ))}
-              </select>
-            </label>
+            <EmployeePicker
+              label="Employee"
+              value={employeeId}
+              onChange={setEmployeeId}
+              items={employees.map((e) => ({ id: e.id, name: e.fullName, code: e.employeeCode }))}
+            />
           )}
         </div>}
         {isAdmin && (
@@ -503,7 +497,7 @@ function AdminSalaryOverview({
   setCustomTo: (v: string) => void;
   employeeId: string;
   setEmployeeId: (v: string) => void;
-  employees: { id: string; fullName: string }[];
+  employees: { id: string; fullName: string; employeeCode?: string | null }[];
 }) {
   const [data, setData] = useState<OverviewData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -608,7 +602,7 @@ function AdminSalaryOverview({
     }
   };
 
-  const cur = data?.currency ?? "";
+  const cur = CURRENCY;
   const t = data?.totals;
   const money = (n: number) => `${cur}${formatNumber(n)}`;
   const attention = (data?.rows ?? []).filter((r) => r.flags.excessiveLeave || r.flags.lateMarks);
@@ -648,15 +642,15 @@ function AdminSalaryOverview({
   return (
     <div className="mb-6 space-y-4">
       {/* Controls */}
-      <Card>
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="inline-flex rounded-xl bg-slate-100 p-1 text-xs font-semibold">
+      <Card className="p-4 sm:p-5">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-12 md:items-end">
+          <div className="col-span-2 flex rounded-xl bg-slate-100 p-1 text-xs font-semibold md:col-span-3">
             {(["cycle", "custom"] as const).map((m) => (
               <button
                 key={m}
                 type="button"
                 onClick={() => setRangeMode(m)}
-                className={`rounded-lg px-3 py-1.5 transition ${rangeMode === m ? "bg-white text-indigo-700 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+                className={`flex-1 rounded-lg px-3 py-2 transition ${rangeMode === m ? "bg-white text-indigo-700 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
               >
                 {m === "cycle" ? "Salary cycle" : "Custom dates"}
               </button>
@@ -664,7 +658,7 @@ function AdminSalaryOverview({
           </div>
 
           {rangeMode === "cycle" ? (
-            <div className="min-w-[220px] flex-1">
+            <div className="col-span-2 md:col-span-9">
               <Select
                 label="Salary cycle"
                 value={month || data?.range.key || ""}
@@ -677,19 +671,30 @@ function AdminSalaryOverview({
             </div>
           ) : (
             <>
-              <div className="w-40"><Input label="From" type="date" value={customFrom} onChange={setCustomFrom} /></div>
-              <div className="w-40"><Input label="To" type="date" value={customTo} onChange={setCustomTo} /></div>
+              <div className="col-span-1 md:col-span-4"><Input label="From" type="date" value={customFrom} onChange={setCustomFrom} /></div>
+              <div className="col-span-1 md:col-span-5"><Input label="To" type="date" value={customTo} onChange={setCustomTo} /></div>
             </>
           )}
 
-          <div className="w-44"><Select label="Department" value={deptId} onChange={setDeptId} options={[{ value: "", label: "All departments" }, ...departments.map((d) => ({ value: d.id, label: d.name }))]} /></div>
-          <div className="w-44"><Select label="Location" value={locId} onChange={setLocId} options={[{ value: "", label: "All locations" }, ...locations.map((l) => ({ value: l.id, label: l.name }))]} /></div>
-          <div className="w-52"><Select label="Employee" value={employeeId} onChange={setEmployeeId} options={[{ value: "", label: "All employees" }, ...employees.map((e) => ({ value: e.id, label: e.fullName }))]} /></div>
-          {(deptId || locId || employeeId) && (
-            <Button size="sm" variant="secondary" onClick={() => { setDeptId(""); setLocId(""); setEmployeeId(""); }}>Clear filters</Button>
-          )}
+          <div className="col-span-1 md:col-span-3">
+            <Select label="Department" value={deptId} onChange={setDeptId} options={[{ value: "", label: "All departments" }, ...departments.map((d) => ({ value: d.id, label: d.name }))]} />
+          </div>
+          <div className="col-span-1 md:col-span-3">
+            <Select label="Location" value={locId} onChange={setLocId} options={[{ value: "", label: "All locations" }, ...locations.map((l) => ({ value: l.id, label: l.name }))]} />
+          </div>
+          <div className="col-span-2 md:col-span-4">
+            <EmployeePicker label="Employee" value={employeeId} onChange={setEmployeeId} allLabel="All employees" items={employees.map((e) => ({ id: e.id, name: e.fullName, code: e.employeeCode }))} />
+          </div>
+          <div className="col-span-2 flex items-center justify-between gap-3 md:col-span-2 md:justify-end">
+            <p className="text-xs text-slate-500 md:hidden">
+              {rangeMode === "custom" ? (customReady ? `${customFrom} → ${customTo}` : "Choose both dates") : data ? data.range.label : "Loading…"}
+            </p>
+            {(deptId || locId || employeeId) && (
+              <Button size="sm" variant="secondary" onClick={() => { setDeptId(""); setLocId(""); setEmployeeId(""); }}>Clear filters</Button>
+            )}
+          </div>
         </div>
-        <p className="mt-3 text-xs text-slate-500">
+        <p className="mt-3 hidden text-xs text-slate-500 md:block">
           {rangeMode === "custom"
             ? customReady ? `Custom range ${customFrom} to ${customTo}. Payslips are shown for salary cycles only.` : "Choose a start and end date."
             : data ? `Salary cycle ${data.range.label}` : "Loading…"}
@@ -704,23 +709,27 @@ function AdminSalaryOverview({
       ) : data && t ? (
         <>
           {/* Headline figures */}
-          <div className="grid gap-3 md:grid-cols-3">
-            <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Total payable (gross)</p>
-              <p className="mt-2 text-3xl font-bold text-slate-900">{money(t.gross)}</p>
-              <p className="mt-1 text-xs text-slate-500">Basic salaries of {t.employees} employee{t.employees === 1 ? "" : "s"}</p>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+            <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 sm:p-5">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 sm:text-[11px]">Total payable</p>
+              <p className="mt-1.5 text-xl font-bold tabular-nums text-slate-900 sm:mt-2 sm:text-3xl">{money(t.gross)}</p>
+              <p className="mt-1 text-[11px] leading-snug text-slate-500 sm:text-xs">Gross basic · {t.employees} employee{t.employees === 1 ? "" : "s"}</p>
             </div>
-            <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-              <p className="text-[11px] font-bold uppercase tracking-wide text-rose-600">Total deductions</p>
-              <p className="mt-2 text-3xl font-bold text-rose-600">−{money(t.deductions)}</p>
-              <p className="mt-1 text-xs text-slate-500">Absent days, late arrivals, half days and leave</p>
+            <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 sm:p-5">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-rose-600 sm:text-[11px]">Total deductions</p>
+              <p className="mt-1.5 text-xl font-bold tabular-nums text-rose-600 sm:mt-2 sm:text-3xl">−{money(t.deductions)}</p>
+              <p className="mt-1 text-[11px] leading-snug text-slate-500 sm:text-xs">Absent, late, half-day &amp; leave</p>
             </div>
-            <div className="rounded-2xl bg-gradient-to-br from-indigo-600 to-violet-600 p-5 text-white shadow-sm">
-              <p className="text-[11px] font-bold uppercase tracking-wide text-indigo-100">Net payable balance</p>
-              <p className="mt-2 text-3xl font-bold">{money(t.net)}</p>
-              <p className="mt-1 text-xs text-indigo-100">
-                {t.holds > 0 ? `${money(t.holds)} on hold · ` : ""}Amount to disburse after deductions
-              </p>
+            <div className="col-span-2 rounded-2xl bg-gradient-to-br from-indigo-600 to-violet-600 p-4 text-white shadow-sm sm:p-5 md:col-span-1">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-indigo-100 sm:text-[11px]">Net payable balance</p>
+                  <p className="mt-1.5 text-2xl font-bold tabular-nums sm:mt-2 sm:text-3xl">{money(t.net)}</p>
+                </div>
+                <p className="shrink-0 text-right text-[11px] leading-snug text-indigo-100 sm:text-xs">
+                  {t.holds > 0 ? <>{money(t.holds)}<br />on hold</> : "to disburse"}
+                </p>
+              </div>
             </div>
           </div>
 

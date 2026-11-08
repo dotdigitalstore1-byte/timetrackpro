@@ -5,7 +5,7 @@ import Link from "next/link";
 import { api, useMe } from "@/lib/client";
 import { Button, Card, EmptyState, ErrorBanner, Input, PageHeader, Select, Spinner } from "@/components/ui";
 import { addDays, cyclePeriod, currentCycleKey, dateKey } from "@/lib/payroll";
-import { formatDayKey, formatNumber } from "@/lib/utils";
+import { formatDayKey, formatNumber, CURRENCY } from "@/lib/utils";
 
 // Everything is held as strings while editing so half-typed numbers never turn into NaN.
 const FIELDS = [
@@ -90,7 +90,7 @@ function Toggle({ label, on, onToggle }: { label: string; on: boolean; onToggle:
 export default function RulesPage() {
   const { me, loading: meLoading } = useMe();
   const isAdmin = me?.user.role === "company_admin";
-  const currency = me?.settings?.currency ?? "";
+  const currency = CURRENCY;
 
   const [form, setForm] = useState<Form | null>(null);
   const [savedStartDay, setSavedStartDay] = useState("1");

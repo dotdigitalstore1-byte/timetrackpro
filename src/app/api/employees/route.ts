@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { auditLogs, employees, users } from "@/db/schema";
 import { getAuth, hashPassword } from "@/lib/auth";
 import { can, loadAccess, visibleEmployeeIds } from "@/lib/access";
+import { codeOwner, nextEmployeeCode, normaliseCode } from "@/lib/employee-code";
 import { shiftOf } from "@/lib/company";
 import { loadEmployeeOrg, parseIdList, replaceEmployeeOrg, validateOrgIds } from "@/lib/org";
 import { isValidHHMM, parseHHMM } from "@/lib/payroll";
@@ -71,7 +72,8 @@ export async function POST(req: Request) {
   const email = String(body.email || "").trim().toLowerCase();
   const password = String(body.password || "");
   const role = "employee";
-  const employeeCode = String(body.employeeCode || "").trim();
+  // Blank = the system assigns the next EMP-nnnn code. A typed code must be unused in the company.
+  const typedCode = normaliseCode(String(body.employeeCode || ""));
   const departmentIds = parseIdList(body.departmentIds);
   const locationIds = parseIdList(body.locationIds);
   const designation = String(body.designation || "").trim();
@@ -109,6 +111,10 @@ export async function POST(req: Request) {
   if (existing.length > 0) {
     return NextResponse.json({ error: "A user with this email already exists." }, { status: 409 });
   }
+  if (typedCode) {
+    const owner = await codeOwner(companyId, typedCode);
+    if (owner) return NextResponse.json({ error: `Employee code ${typedCode} is already used by ${owner}.` }, { status: 409 });
+  }
 
   // A manager can only add people to departments and locations they are responsible for.
   if (!access.isAdmin) {
@@ -123,36 +129,46 @@ export async function POST(req: Request) {
   if (Number.isNaN(hireDate.getTime())) return NextResponse.json({ error: "Invalid hire date." }, { status: 400 });
   if (!(Number(body.basicSalary) >= 0)) return NextResponse.json({ error: "Basic salary must be zero or more." }, { status: 400 });
 
-  try {
-    const empId = await db.transaction(async (tx) => {
-      const [user] = await tx
-        .insert(users)
-        .values({ companyId, email, passwordHash: hashPassword(password), fullName, role, phone })
-        .returning();
+  // Two admins adding people at the same moment can be given the same generated code; retry with the next one.
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const empId = await db.transaction(async (tx) => {
+        const [user] = await tx
+          .insert(users)
+          .values({ companyId, email, passwordHash: hashPassword(password), fullName, role, phone })
+          .returning();
 
-      const [emp] = await tx
-        .insert(employees)
-        .values({ companyId, userId: user.id, employeeCode, designation, shiftStart, shiftEnd, basicSalary, hireDate })
-        .returning();
+        const employeeCode = typedCode || (await nextEmployeeCode(companyId, tx));
+        const [emp] = await tx
+          .insert(employees)
+          .values({ companyId, userId: user.id, employeeCode, designation, shiftStart, shiftEnd, basicSalary, hireDate })
+          .returning();
 
-      await replaceEmployeeOrg(tx, emp.id, departmentIds, locationIds);
+        await replaceEmployeeOrg(tx, emp.id, departmentIds, locationIds);
 
-      await tx.insert(auditLogs).values({
-        companyId,
-        actorId: ctx.user.id,
-        action: "employee.create",
-        entity: "employee",
-        entityId: emp.id,
-        details: { fullName, email, role, designation, shiftStart, shiftEnd, basicSalary, departmentIds, locationIds, createdByRole: ctx.user.role },
+        await tx.insert(auditLogs).values({
+          companyId,
+          actorId: ctx.user.id,
+          action: "employee.create",
+          entity: "employee",
+          entityId: emp.id,
+          details: { fullName, email, role, employeeCode, designation, shiftStart, shiftEnd, basicSalary, departmentIds, locationIds, createdByRole: ctx.user.role },
+        });
+        return emp.id;
       });
-      return emp.id;
-    });
-    return NextResponse.json({ ok: true, id: empId });
-  } catch (e) {
-    if ((e as { code?: string }).code === "23505") {
-      return NextResponse.json({ error: "A user with this email already exists." }, { status: 409 });
+      return NextResponse.json({ ok: true, id: empId });
+    } catch (e) {
+      const err = e as { code?: string; constraint?: string };
+      if (err.code === "23505" && err.constraint === "employees_company_code_uniq" && !typedCode && attempt < 3) continue;
+      if (err.code === "23505" && err.constraint === "employees_company_code_uniq") {
+        return NextResponse.json({ error: `Employee code ${typedCode} is already in use.` }, { status: 409 });
+      }
+      if (err.code === "23505") {
+        return NextResponse.json({ error: "A user with this email already exists." }, { status: 409 });
+      }
+      console.error("employee create error", e);
+      return NextResponse.json({ error: "Could not add the employee. Please try again." }, { status: 500 });
     }
-    console.error("employee create error", e);
-    return NextResponse.json({ error: "Could not add the employee. Please try again." }, { status: 500 });
   }
+  return NextResponse.json({ error: "Could not add the employee. Please try again." }, { status: 500 });
 }

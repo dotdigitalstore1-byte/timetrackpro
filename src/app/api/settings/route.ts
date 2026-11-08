@@ -52,7 +52,8 @@ export async function POST(req: Request) {
     if (s.leaveDeductionType !== undefined) update.leaveDeductionType = s.leaveDeductionType === "fixed" ? "fixed" : "percentage";
     if (s.leaveDeductionValue !== undefined) update.leaveDeductionValue = String(Math.max(0, numField(s.leaveDeductionValue, 100)));
     if (s.unapprovedHoldDays !== undefined) update.unapprovedHoldDays = clampInt(s.unapprovedHoldDays, 0, 30, 2);
-    if (s.currency !== undefined && String(s.currency).trim()) update.currency = String(s.currency).trim().slice(0, 10);
+    // Amounts are always in Indian Rupees; the currency is not configurable.
+    update.currency = "₹";
     if (s.approvalLevels !== undefined) update.approvalLevels = s.approvalLevels === 2 ? 2 : 1;
     if (s.timezone !== undefined) {
       const tz = String(s.timezone).trim();

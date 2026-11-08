@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/client";
 import { Badge, Button, Card, Input, Modal, PageHeader, Select, Spinner, StatCard } from "@/components/ui";
-import { formatDate, formatNumber } from "@/lib/utils";
+import { formatDate, formatMoney, formatNumber } from "@/lib/utils";
 
 interface CompanyRow {
   id: string;
@@ -148,7 +148,7 @@ export default function SuperAdminPage() {
                         <td className="px-4 py-3 text-slate-600">
                           {c.subscription ? (
                             <>
-                              <p>{c.subscription.plan} · {formatNumber(c.subscription.amount)}</p>
+                              <p>{c.subscription.plan} · {formatMoney(c.subscription.amount, 0)}</p>
                               <p className="text-xs text-slate-400">{c.subscription.endDate ? `until ${formatDate(c.subscription.endDate)}` : "—"}</p>
                             </>
                           ) : "—"}
@@ -184,7 +184,7 @@ export default function SuperAdminPage() {
                       <div>
                         <p className="text-slate-400">Subscription</p>
                         <p className="font-semibold text-slate-700">
-                          {c.subscription ? `${c.subscription.plan} · ${formatNumber(c.subscription.amount)}` : "—"}
+                          {c.subscription ? `${c.subscription.plan} · ${formatMoney(c.subscription.amount, 0)}` : "—"}
                         </p>
                       </div>
                       <div>

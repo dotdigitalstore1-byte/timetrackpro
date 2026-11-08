@@ -5,11 +5,13 @@ import { api, hasPower, useMe } from "@/lib/client";
 import { Badge, Button, Card, EmptyState, Input, Modal, PageHeader, Select, Spinner } from "@/components/ui";
 import { formatDate, formatDayKey, formatTime, workingHours } from "@/lib/utils";
 import { attendanceCounts } from "@/lib/attendance-stats";
+import EmployeePicker from "@/components/EmployeePicker";
 
 interface AttendanceRow {
   id: string;
   employeeId: string;
   employeeName: string;
+  employeeCode?: string | null;
   workDate: string;
   punchInTime: string | null;
   punchOutTime: string | null;
@@ -25,6 +27,7 @@ interface AttendanceRow {
 interface EmployeeOption {
   id: string;
   fullName: string;
+  employeeCode?: string | null;
 }
 
 /** Small notes under a punch-out: "left 20 min early" / "+1h 10m overtime". */
@@ -134,11 +137,12 @@ export default function AttendancePage() {
             )}
           </div>
           {canViewAll && (
-            <Select
+            <EmployeePicker
               label="Employee"
               value={employeeId}
               onChange={setEmployeeId}
-              options={[{ value: "", label: "All employees" }, ...employees.map((e) => ({ value: e.id, label: e.fullName }))]}
+              allLabel="All employees"
+              items={employees.map((e) => ({ id: e.id, name: e.fullName, code: e.employeeCode }))}
             />
           )}
         </div>
@@ -193,7 +197,12 @@ export default function AttendancePage() {
                       {formatDate(r.workDate)}
                       {r.isManual && <span className="ml-1 text-[10px] font-bold text-indigo-500">EDITED</span>}
                     </td>
-                    {canViewAll && <td className="px-4 py-3 text-slate-600">{r.employeeName}</td>}
+                    {canViewAll && (
+                      <td className="px-4 py-3">
+                        <p className="font-medium text-slate-700">{r.employeeName}</p>
+                        {r.employeeCode && <p className="font-mono text-[11px] text-slate-400">{r.employeeCode}</p>}
+                      </td>
+                    )}
                     <td className="px-4 py-3 text-slate-600">{formatTime(r.punchInTime)}</td>
                     <td className="px-4 py-3 text-slate-600">{formatTime(r.punchOutTime)}<TimeNotes r={r} /></td>
                     <td className="px-4 py-3 text-slate-600">{workingHours(r.punchInTime, r.punchOutTime)}</td>
@@ -217,7 +226,7 @@ export default function AttendancePage() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="font-bold text-slate-800">{formatDate(r.workDate)}</p>
-                    {canViewAll && <p className="text-xs text-slate-500">{r.employeeName}</p>}
+                    {canViewAll && <p className="text-xs text-slate-500">{r.employeeName}{r.employeeCode ? ` · ${r.employeeCode}` : ""}</p>}
                   </div>
                   <div className="flex items-center gap-1.5">
                     {r.isManual && <span className="text-[10px] font-bold text-indigo-500">EDITED</span>}

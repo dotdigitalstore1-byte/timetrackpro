@@ -3,9 +3,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, ApiError, downloadBlob, hasPower, useMe } from "@/lib/client";
 import { Badge, Button, Card, EmptyState, ErrorBanner, Input, Modal, PageHeader, Select, Spinner } from "@/components/ui";
+import EmployeePicker from "@/components/EmployeePicker";
 import { formatDayKey, formatTime } from "@/lib/utils";
 
 interface PhotoRecord {
+  employeeCode?: string | null;
   id: string;
   employeeId: string;
   employeeName: string;
@@ -20,6 +22,7 @@ interface PhotoRecord {
 }
 
 interface Option {
+  code?: string | null;
   id: string;
   name: string;
 }
@@ -96,10 +99,10 @@ export default function PhotoAuditPage() {
     void (async () => {
       try {
         const [e, d] = await Promise.all([
-          api<{ employees: { id: string; fullName: string }[] }>("/api/employees"),
+          api<{ employees: { id: string; fullName: string; employeeCode: string | null }[] }>("/api/employees"),
           api<{ departments: { id: string; name: string }[] }>("/api/departments"),
         ]);
-        setEmployees(e.employees.map((x) => ({ id: x.id, name: x.fullName })));
+        setEmployees(e.employees.map((x) => ({ id: x.id, name: x.fullName, code: x.employeeCode })));
         setDepartments(d.departments.map((x) => ({ id: x.id, name: x.name })));
       } catch {
         // filters are optional; the gallery still works without them
@@ -158,11 +161,12 @@ export default function PhotoAuditPage() {
               Named after the month it ends in (e.g. November = 26 Oct – 25 Nov). Leave empty for the current cycle.
             </p>
           </div>
-          <Select
+          <EmployeePicker
             label="Employee"
             value={employeeId}
             onChange={setEmployeeId}
-            options={[{ value: "", label: "All employees" }, ...employees.map((e) => ({ value: e.id, label: e.name }))]}
+            allLabel="All employees"
+            items={employees.map((e) => ({ id: e.id, name: e.name, code: e.code }))}
           />
           <Select
             label="Department"
@@ -205,7 +209,7 @@ export default function PhotoAuditPage() {
                   <Card key={r.id} className="p-3">
                     <div className="mb-2 flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-slate-900">{r.employeeName}</p>
+                        <p className="truncate text-sm font-semibold text-slate-900">{r.employeeName}{r.employeeCode ? <span className="ml-1.5 font-mono text-[11px] font-normal text-slate-400">{r.employeeCode}</span> : null}</p>
                         <p className="truncate text-[11px] text-slate-400">{r.departments || "No department"}</p>
                       </div>
                       <Badge tone={STATUS_TONE[r.status] ?? "slate"}>{r.status.replace("_", " ")}</Badge>

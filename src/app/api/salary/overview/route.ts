@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { employees, users } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
 import { loadAccess } from "@/lib/access";
+import { CURRENCY as CURRENCY_CODE } from "@/lib/utils";
 import { loadEmployeeOrg } from "@/lib/org";
 import { computeAllForMonth } from "@/lib/salary";
 import { parseReportRange, toOverviewRow, totalsOf, type OverviewRow } from "@/lib/salary-report";
@@ -76,7 +77,7 @@ export async function GET(req: Request) {
       isCustom: !!range.customPeriod,
     },
     cycles,
-    currency: settings.currency,
+    currency: CURRENCY_CODE,
     lateMarksLimit: settings.lateMarksLimit,
     rows,
     totals: totalsOf(rows),

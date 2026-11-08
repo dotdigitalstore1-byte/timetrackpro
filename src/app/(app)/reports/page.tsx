@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, downloadBlob, toCSV, useMe } from "@/lib/client";
 import { Button, Card, EmptyState, ErrorBanner, Input, PageHeader, Select, Spinner } from "@/components/ui";
+import EmployeePicker from "@/components/EmployeePicker";
 
 interface ReportRow {
   [key: string]: unknown;
@@ -17,7 +18,7 @@ export default function ReportsPage() {
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [employeeId, setEmployeeId] = useState("");
   const [departmentId, setDepartmentId] = useState("");
-  const [employees, setEmployees] = useState<{ id: string; fullName: string }[]>([]);
+  const [employees, setEmployees] = useState<{ id: string; fullName: string; employeeCode?: string | null }[]>([]);
   const [departments, setDepartments] = useState<{ id: string; name: string }[]>([]);
   const [rows, setRows] = useState<ReportRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -169,11 +170,12 @@ export default function ReportsPage() {
             onChange={setDepartmentId}
             options={[{ value: "", label: "All departments" }, ...departments.map((d) => ({ value: d.id, label: d.name }))]}
           />
-          <Select
+          <EmployeePicker
             label="Employee"
             value={employeeId}
             onChange={setEmployeeId}
-            options={[{ value: "", label: "All employees" }, ...employees.map((e) => ({ value: e.id, label: e.fullName }))]}
+            allLabel="All employees"
+            items={employees.map((e) => ({ id: e.id, name: e.fullName, code: e.employeeCode }))}
           />
         </div>
       </Card>

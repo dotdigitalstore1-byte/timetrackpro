@@ -68,10 +68,10 @@ export default function SettingsPage() {
     setError("");
     try {
       // Only this page's own fields: attendance rules and salary cycle are saved from the Rules page.
-      const { shiftStart, shiftEnd, timezone, annualLeaveDays, weeklyOff, currency, approvalLevels } = settings;
+      const { shiftStart, shiftEnd, timezone, annualLeaveDays, weeklyOff, approvalLevels } = settings;
       await api("/api/settings", {
         method: "POST",
-        body: JSON.stringify({ settings: { shiftStart, shiftEnd, timezone, annualLeaveDays, weeklyOff, currency, approvalLevels } }),
+        body: JSON.stringify({ settings: { shiftStart, shiftEnd, timezone, annualLeaveDays, weeklyOff, approvalLevels } }),
       });
       setMessage("Settings saved.");
       await load();
@@ -178,7 +178,6 @@ export default function SettingsPage() {
 
           <h3 className="mb-2 mt-5 font-bold text-slate-900">General</h3>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Input label="Currency symbol" value={settings.currency} onChange={(v) => set({ currency: v })} />
             <Select
               label="Leave approval levels"
               value={String(settings.approvalLevels)}

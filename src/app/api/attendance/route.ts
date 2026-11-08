@@ -71,6 +71,7 @@ export async function GET(req: Request) {
       hasPunchInPhoto: sql<boolean>`(${attendance.punchInPhoto} is not null)`,
       hasPunchOutPhoto: sql<boolean>`(${attendance.punchOutPhoto} is not null)`,
       employeeName: users.fullName,
+      employeeCode: employees.employeeCode,
     })
     .from(attendance)
     .innerJoin(employees, eq(attendance.employeeId, employees.id))
@@ -96,7 +97,7 @@ export async function GET(req: Request) {
         r.workDate,
         todayLocal
       );
-      return { ...rec, status: shown, autoHalfDay: shown === "half_day" && rec.status !== "half_day", employeeName: r.employeeName };
+      return { ...rec, status: shown, autoHalfDay: shown === "half_day" && rec.status !== "half_day", employeeName: r.employeeName, employeeCode: r.employeeCode };
     }),
   });
 }

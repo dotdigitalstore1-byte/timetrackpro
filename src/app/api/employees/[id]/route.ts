@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { auditLogs, employees, users } from "@/db/schema";
 import { getAuth, hashPassword } from "@/lib/auth";
 import { can, canSeeEmployee, loadAccess } from "@/lib/access";
+import { codeOwner, normaliseCode } from "@/lib/employee-code";
 import { shiftOf } from "@/lib/company";
 import { parseIdList, replaceEmployeeOrg, validateOrgIds } from "@/lib/org";
 import { isValidHHMM, parseHHMM } from "@/lib/payroll";
@@ -46,7 +47,13 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     }
     userUpdate.passwordHash = hashPassword(body.password);
   }
-  if (typeof body.employeeCode === "string") empUpdate.employeeCode = body.employeeCode.trim();
+  if (body.employeeCode !== undefined) {
+    const code = normaliseCode(String(body.employeeCode || ""));
+    if (!code) return NextResponse.json({ error: "Every employee needs an employee code (for example EMP-0007)." }, { status: 400 });
+    const owner = await codeOwner(companyId, code, id);
+    if (owner) return NextResponse.json({ error: `Employee code ${code} is already used by ${owner}.` }, { status: 409 });
+    empUpdate.employeeCode = code;
+  }
   if (typeof body.designation === "string") empUpdate.designation = body.designation.trim();
 
   // Shift (punch-in / punch-out time). Either can be changed; the result must stay a valid same-day range.

@@ -78,6 +78,7 @@ export async function GET() {
       id: r.leave_requests.id,
       employeeId: r.leave_requests.employeeId,
       employeeName: r.users.fullName,
+      employeeCode: r.employees.employeeCode,
       leaveType: r.leave_requests.leaveType,
       startDate: r.leave_requests.startDate,
       endDate: r.leave_requests.endDate,

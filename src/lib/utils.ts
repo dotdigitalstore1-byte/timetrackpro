@@ -28,9 +28,18 @@ export function formatTime(d: Date | string | null | undefined): string {
   return date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
 }
 
+/** Every amount in the app is in Indian Rupees. */
+export const CURRENCY = "₹";
+
+/** Indian digit grouping (1,00,000). */
 export function formatNumber(n: number | string | null | undefined, digits = 2): string {
   const num = Number(n ?? 0);
-  return num.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  return num.toLocaleString("en-IN", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+}
+
+/** A rupee amount, e.g. ₹1,25,000.00 */
+export function formatMoney(n: number | string | null | undefined, digits = 2): string {
+  return `${CURRENCY}${formatNumber(n, digits)}`;
 }
 
 export function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {

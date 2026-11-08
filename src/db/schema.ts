@@ -86,7 +86,7 @@ export const companySettings = pgTable("company_settings", {
   leaveDeductionValue: numeric("leave_deduction_value", { precision: 10, scale: 2 }).notNull().default("100"),
   unapprovedHoldDays: integer("unapproved_hold_days").notNull().default(2),
   workDaysPerMonth: integer("work_days_per_month").notNull().default(26),
-  currency: varchar("currency", { length: 10 }).notNull().default("$"),
+  currency: varchar("currency", { length: 10 }).notNull().default("₹"),
   approvalLevels: integer("approval_levels").notNull().default(1), // 1 or 2
   timezone: varchar("timezone", { length: 50 }).notNull().default("UTC"),
   weeklyOff: varchar("weekly_off", { length: 20 }).notNull().default("0,6"), // JS weekdays: 0=Sun … 6=Sat
@@ -191,7 +191,7 @@ export const employees = pgTable(
   userId: uuid("user_id")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
-  employeeCode: varchar("employee_code", { length: 50 }),
+  employeeCode: varchar("employee_code", { length: 50 }).notNull(),
   // LEGACY free-text department. Superseded by the departments + employee_departments tables.
   // Kept only so `npm run db:backfill` can migrate old data; safe to drop afterwards.
   department: varchar("department", { length: 100 }),
@@ -209,6 +209,8 @@ export const employees = pgTable(
     index("employees_company_idx").on(t.companyId),
     index("employees_user_idx").on(t.userId),
     index("employees_manager_idx").on(t.managerId),
+    // every employee has a code, and no two employees in a company share one
+    uniqueIndex("employees_company_code_uniq").on(t.companyId, t.employeeCode),
   ]
 );
 

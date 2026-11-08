@@ -29,7 +29,7 @@ export interface ExportOptions {
   employees: ExportEmployee[];
 }
 
-const MONEY = "#,##0.00";
+const MONEY = '"₹"#,##0.00';
 const HEADER_FILL = { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: "FF4F46E5" } };
 const TOTAL_FILL = { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: "FFEEF2FF" } };
 

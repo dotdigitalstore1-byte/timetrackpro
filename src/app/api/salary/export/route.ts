@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { attendance, auditLogs, employees, users } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
 import { loadAccess } from "@/lib/access";
+import { CURRENCY as CURRENCY_CODE } from "@/lib/utils";
 import { loadEmployeeOrg } from "@/lib/org";
 import { computeAllForMonth } from "@/lib/salary";
 import { parseReportRange, toOverviewRow, type OverviewRow } from "@/lib/salary-report";
@@ -146,7 +147,7 @@ export async function GET(req: Request) {
   const generatedAt = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: tz }).format(new Date());
   const wb = await buildSalaryWorkbook({
     companyName: ctx.company!.name,
-    currency: settings.currency,
+    currency: CURRENCY_CODE,
     rangeLabel: range.label,
     groupBy,
     includePhotos,

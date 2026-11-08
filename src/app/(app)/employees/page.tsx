@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { api, hasPower, useMe } from "@/lib/client";
 import { Badge, Button, Card, ChipSelect, EmptyState, ErrorBanner, Input, Modal, PageHeader, Select, Spinner } from "@/components/ui";
-import { formatDate, formatNumber } from "@/lib/utils";
+import { formatDate, formatNumber, CURRENCY } from "@/lib/utils";
 
 interface OrgRef {
   id: string;
@@ -79,7 +79,7 @@ export default function EmployeesPage() {
   const isAdmin = me?.user.role === "company_admin";
   // Admins, and managers with the manage_employees power, can add and edit people (salary is admin-only).
   const canManage = hasPower(me, "manage_employees");
-  const currency = me?.settings?.currency ?? "$";
+  const currency = CURRENCY;
 
   const [employees, setEmployees] = useState<EmployeeRow[]>([]);
   const [departments, setDepartments] = useState<OrgOption[]>([]);
@@ -249,7 +249,7 @@ export default function EmployeesPage() {
         <Input
           value={search}
           onChange={setSearch}
-          placeholder="Search by name, email, department or code..."
+          placeholder="Search by name, employee code (e.g. EMP-0012), email or department…"
         />
         <p className="mt-2 px-1 text-[11px] font-medium text-slate-400">
           Showing {filtered.length} of {employees.length} {employees.length === 1 ? "person" : "people"}
@@ -404,7 +404,7 @@ export default function EmployeesPage() {
             placeholder={editing ? "Optional reset" : "At least 8 characters"}
           />
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Input label="Employee code" value={form.employeeCode} onChange={(v) => setForm({ ...form, employeeCode: v })} />
+            <Input label="Employee code" value={form.employeeCode} onChange={(v) => setForm({ ...form, employeeCode: v })} placeholder="Leave blank to assign the next code (EMP-0001…)" />
           </div>
           <Input label="Designation" value={form.designation} onChange={(v) => setForm({ ...form, designation: v })} />
           <div>

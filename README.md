@@ -195,3 +195,17 @@ Salary totals are on the Salary page.
   period (up to 300 employees). Every export is recorded in the audit log.
 
 Salary figures are calculated in one bulk pass per request (one query per table), not one query per employee.
+
+## Currency and employee codes
+
+* All amounts are in **Indian Rupees (₹)**, shown with Indian digit grouping (₹1,25,000.00). The currency is fixed,
+  so there is no currency setting to change.
+* Every employee has an **employee code**, unique within the company. Leave it blank when adding someone to have the
+  next code assigned (EMP-0001, EMP-0002…); a code you type must not already be in use. Codes are not case-sensitive.
+* Search by **name or employee code** everywhere an employee can be picked: a code such as `EMP-0012` finds that
+  person, and a number such as `12` also works. Employee codes appear next to names in the attendance table,
+  photo audit, leaves, pending approvals and salary.
+
+Run `migrations/2026-11-currency-and-employee-codes.sql` once. It switches stored currency to ₹, gives codes to any
+employee who doesn't have one, and renames duplicate codes (keeping the oldest, so `EMP-0003` becomes `EMP-0003-2`).
+Check the Employees page afterwards for any renamed codes.

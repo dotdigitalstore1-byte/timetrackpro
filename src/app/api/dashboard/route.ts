@@ -121,6 +121,7 @@ export async function GET() {
   ]);
 
   const nameById = new Map(scoped.map((e) => [e.employee.id, e.fullName]));
+  const codeById = new Map(scoped.map((e) => [e.employee.id, e.employee.employeeCode]));
   const weeklyOff = weeklyOffOf(settings);
   const todayRows = cycleRows.filter((r) => dateKey(r.workDate) === todayKey);
   const todayPunched = new Set(todayRows.filter((r) => r.punchInTime).map((r) => r.employeeId));
@@ -177,6 +178,7 @@ export async function GET() {
   const pendingLeaves = pendingRows.slice(0, 10).map((l) => ({
     id: l.id,
     employeeName: nameById.get(l.employeeId) ?? "",
+    employeeCode: codeById.get(l.employeeId) ?? null,
     leaveType: l.leaveType,
     startDate: l.startDate,
     endDate: l.endDate,

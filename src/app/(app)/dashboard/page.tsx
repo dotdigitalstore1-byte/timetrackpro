@@ -6,7 +6,7 @@ import Link from "next/link";
 import { api, useMe } from "@/lib/client";
 import { Badge, Button, Card, EmptyState, ErrorBanner, PageHeader, Spinner, StatCard } from "@/components/ui";
 import PunchCard from "@/components/PunchCard";
-import { formatDate, formatDayKey, formatNumber, monthLabel } from "@/lib/utils";
+import { formatDate, formatDayKey, formatNumber, monthLabel, CURRENCY } from "@/lib/utils";
 import { attendanceCounts } from "@/lib/attendance-stats";
 
 interface AttendanceRow {
@@ -75,6 +75,7 @@ interface RulesSummary {
 interface PendingLeave {
   id: string;
   employeeName: string;
+  employeeCode?: string | null;
   leaveType: string;
   startDate: string;
   endDate: string;
@@ -244,13 +245,13 @@ function EmployeeDashboard() {
             {salary ? (
               <>
                 <p className="text-2xl font-bold text-emerald-600">
-                  {me?.settings?.currency ?? "$"}
+                  {CURRENCY}
                   {formatNumber(salary.breakdown.netPayable)}
                 </p>
                 <p className="text-xs text-slate-500">{salary.period ? `${formatDayKey(salary.period.start)} – ${formatDayKey(salary.period.end)}` : monthLabel(salary.year, salary.month)} · net payable</p>
                 <div className="mt-2 space-y-1 text-xs text-slate-500">
-                  <p className="flex justify-between"><span>Attendance salary</span><span>{me?.settings?.currency}{formatNumber(salary.breakdown.attendanceSalary)}</span></p>
-                  <p className="flex justify-between"><span>Deductions</span><span className="text-rose-600">-{me?.settings?.currency}{formatNumber(salary.breakdown.totalDeductions)}</span></p>
+                  <p className="flex justify-between"><span>Attendance salary</span><span>{CURRENCY}{formatNumber(salary.breakdown.attendanceSalary)}</span></p>
+                  <p className="flex justify-between"><span>Deductions</span><span className="text-rose-600">-{CURRENCY}{formatNumber(salary.breakdown.totalDeductions)}</span></p>
                   <p className="flex justify-between"><span>Salary holds</span><span className="text-amber-600">{salary.breakdown.salaryHoldDays} days</span></p>
                 </div>
               </>
@@ -445,7 +446,7 @@ function StaffDashboard({ role }: { role: string }) {
                     <div key={l.id} className="rounded-xl border border-slate-100 p-3">
                       <div className="flex items-center justify-between gap-2">
                         <div className="min-w-0">
-                          <p className="truncate text-sm font-bold text-slate-800">{l.employeeName}</p>
+                          <p className="truncate text-sm font-bold text-slate-800">{l.employeeName}{l.employeeCode ? <span className="ml-2 font-mono text-[11px] font-normal text-slate-400">{l.employeeCode}</span> : null}</p>
                           <p className="text-xs text-slate-500">
                             {formatDate(l.startDate)} → {formatDate(l.endDate)} · {l.days} day(s) · {l.leaveType === "medical" ? "Medical" : "Casual"}
                           </p>

@@ -81,7 +81,7 @@ export async function GET(req: Request) {
   // Only the people this viewer may see: all employees for an admin, the team for a manager.
   const visible = await visibleEmployeeIds(ctx, access);
   const companyEmployees = await db
-    .select({ id: employees.id, name: users.fullName })
+    .select({ id: employees.id, name: users.fullName, code: employees.employeeCode })
     .from(employees)
     .innerJoin(users, eq(employees.userId, users.id))
     .where(eq(employees.companyId, companyId));
@@ -97,6 +97,7 @@ export async function GET(req: Request) {
   if (employeeId) allowed = new Set(allowed.has(employeeId) ? [employeeId] : []);
   const ids = [...allowed];
   const nameById = new Map(companyEmployees.map((e) => [e.id, e.name]));
+  const codeById = new Map(companyEmployees.map((e) => [e.id, e.code]));
 
   const format = q.get("format") === "xlsx" ? "xlsx" : "json";
   const withPhotos = format === "xlsx" && q.get("photos") === "1";
@@ -161,6 +162,7 @@ export async function GET(req: Request) {
     id: r.id,
     employeeId: r.employeeId,
     employeeName: nameById.get(r.employeeId) ?? "",
+    employeeCode: codeById.get(r.employeeId) ?? null,
     departments: deptNames(r.employeeId),
     workDate: dateKey(r.workDate),
     punchInTime: r.punchInTime,
