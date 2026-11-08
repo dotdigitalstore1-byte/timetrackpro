@@ -1,4 +1,4 @@
-import { and, eq, gte, lt } from "drizzle-orm";
+import { and, eq, gte, inArray, lt } from "drizzle-orm";
 import { db } from "@/db";
 import {
   attendance,
@@ -8,8 +8,9 @@ import {
   leaveRequests,
   salaryHolds,
   salaryRecords,
+  users,
 } from "@/db/schema";
-import type { CompanySettings, SalaryHold, SalaryRecord } from "@/db/schema";
+import type { CompanySettings, Employee, SalaryHold, SalaryRecord } from "@/db/schema";
 import { holidayKeys, shiftOf, summaryRulesOf, weeklyOffOf } from "@/lib/company";
 import {
   addDays,
@@ -27,6 +28,7 @@ import {
 } from "@/lib/payroll";
 
 export interface SalaryComputation {
+  employee: Employee;
   year: number;
   month: number;
   employeeId: string;
@@ -57,35 +59,39 @@ async function loadSettings(companyId: string): Promise<CompanySettings> {
   return rows[0];
 }
 
+type AttendanceRow = {
+  employeeId: string;
+  workDate: Date;
+  status: string;
+  punchInTime: Date | null;
+  punchOutTime: Date | null;
+  earlyLeaveMinutes: number;
+  overtimeMinutes: number;
+};
+type LeaveRow = { employeeId: string; startDate: Date; endDate: Date };
+
+/** Everything needed to work out one employee's month, already loaded from the database. */
+export interface MonthInput {
+  employee: Employee;
+  record: SalaryRecord | null; // stored record for this month (any status)
+  customPeriod?: Period; // an explicit date range instead of the salary cycle (ignores stored records)
+  storedHolds: SalaryHold[];
+  att: AttendanceRow[];
+  leaves: { startDate: Date; endDate: Date }[];
+}
+
 /**
- * READ-ONLY: computes a month's salary. Never writes. Finalized/paid months
- * return the stored, frozen figures so history can never silently change.
+ * The pay period for a month. Finalized / paid records keep the period they were calculated for, even if the
+ * cycle setting changes later. Records finalized before salary cycles existed were calendar months.
  */
-export async function computeMonth(
-  companyId: string,
-  employeeId: string,
+export function resolvePeriod(
+  settings: CompanySettings,
   year: number,
-  month: number
-): Promise<SalaryComputation> {
-  const empRows = await db
-    .select()
-    .from(employees)
-    .where(and(eq(employees.id, employeeId), eq(employees.companyId, companyId)))
-    .limit(1);
-  const emp = empRows[0];
-  if (!emp) throw new Error("Employee not found");
-
-  const settings = await loadSettings(companyId);
-
-  const existingRows = await db
-    .select()
-    .from(salaryRecords)
-    .where(and(eq(salaryRecords.employeeId, employeeId), eq(salaryRecords.year, year), eq(salaryRecords.month, month)))
-    .limit(1);
-  const record = existingRows[0] ?? null;
-
-  // Finalized / paid records keep the period they were calculated for, even if the cycle setting changes later.
-  // Records finalized before salary cycles existed have no stored period; they were calendar months.
+  month: number,
+  record: SalaryRecord | null,
+  customPeriod?: Period
+): { period: Period; frozen: boolean } {
+  if (customPeriod) return { period: customPeriod, frozen: false };
   const isFrozen = !!record && record.status !== "draft";
   const period: Period =
     isFrozen && record?.periodStart && record.periodEnd
@@ -93,47 +99,28 @@ export async function computeMonth(
       : isFrozen
         ? cyclePeriod(year, month, 1)
         : cyclePeriod(year, month, settings.salaryCycleStartDay);
-  const start = period.start;
-  const end = addDays(period.end, 1); // exclusive
+  return { period, frozen: isFrozen };
+}
 
-  const storedHolds = await db
-    .select()
-    .from(salaryHolds)
-    .where(and(eq(salaryHolds.employeeId, employeeId), eq(salaryHolds.year, year), eq(salaryHolds.month, month)));
-  const holdByDay = new Map(storedHolds.map((h) => [dateKey(h.occurrenceDate), h]));
+/** PURE: works out one employee's month from already-loaded data. Never reads or writes the database. */
+export function computeFromData(
+  settings: CompanySettings,
+  holidays: Set<string>,
+  year: number,
+  month: number,
+  input: MonthInput,
+  now: Date = new Date()
+): SalaryComputation {
+  const emp = input.employee;
+  const record = input.customPeriod ? null : input.record;
+  const { period, frozen } = resolvePeriod(settings, year, month, record, input.customPeriod);
 
+  const holdByDay = new Map(input.storedHolds.map((h) => [dateKey(h.occurrenceDate), h]));
   const otherDeductions = (record?.otherDeductions ?? []) as { label: string; amount: number }[];
   const additions = (record?.additions ?? []) as { label: string; amount: number }[];
 
-  const [att, leaves, holidays] = await Promise.all([
-    // Only the fields payroll uses: never load punch photos to calculate pay.
-    db
-      .select({
-        workDate: attendance.workDate,
-        status: attendance.status,
-        punchInTime: attendance.punchInTime,
-        punchOutTime: attendance.punchOutTime,
-        earlyLeaveMinutes: attendance.earlyLeaveMinutes,
-        overtimeMinutes: attendance.overtimeMinutes,
-      })
-      .from(attendance)
-      .where(and(eq(attendance.employeeId, employeeId), gte(attendance.workDate, start), lt(attendance.workDate, end))),
-    db
-      .select()
-      .from(leaveRequests)
-      .where(
-        and(
-          eq(leaveRequests.employeeId, employeeId),
-          eq(leaveRequests.status, "approved"),
-          lt(leaveRequests.startDate, end),
-          gte(leaveRequests.endDate, start)
-        )
-      ),
-    holidayKeys(companyId, start, end),
-  ]);
-
   const records = new Map<string, DayRecord>();
-  for (const r of att) {
+  for (const r of input.att) {
     records.set(dateKey(r.workDate), {
       status: r.status,
       hasPunchIn: !!r.punchInTime,
@@ -151,8 +138,8 @@ export async function computeMonth(
     weeklyOff: weeklyOffOf(settings),
     holidays,
     records,
-    approvedLeaves: leaves.map((l) => ({ start: l.startDate, end: l.endDate })),
-    todayLocal: localWorkDate(new Date(), settings.timezone),
+    approvedLeaves: input.leaves.map((l) => ({ start: l.startDate, end: l.endDate })),
+    todayLocal: localWorkDate(now, settings.timezone),
     joinDate: localWorkDate(emp.hireDate, settings.timezone),
   });
 
@@ -185,7 +172,6 @@ export async function computeMonth(
   });
 
   // Finalized / paid months are frozen: show exactly what was stored at finalization.
-  const frozen = !!record && record.status !== "draft";
   let finalResult: SalaryResult = result;
   let finalSummary: MonthSummary = summary;
   if (frozen && record) {
@@ -236,7 +222,191 @@ export async function computeMonth(
     };
   });
 
-  return { year, month, employeeId, basicSalary, summary: finalSummary, result: finalResult, otherDeductions, additions, period, holds, record, frozen };
+  return {
+    employee: emp,
+    year,
+    month,
+    employeeId: emp.id,
+    basicSalary,
+    summary: finalSummary,
+    result: finalResult,
+    otherDeductions,
+    additions,
+    period,
+    holds,
+    record,
+    frozen,
+  };
+}
+
+/** READ-ONLY: computes one employee's month. Finalized/paid months return the stored, frozen figures. */
+export async function computeMonth(
+  companyId: string,
+  employeeId: string,
+  year: number,
+  month: number
+): Promise<SalaryComputation> {
+  const empRows = await db
+    .select()
+    .from(employees)
+    .where(and(eq(employees.id, employeeId), eq(employees.companyId, companyId)))
+    .limit(1);
+  const emp = empRows[0];
+  if (!emp) throw new Error("Employee not found");
+
+  const settings = await loadSettings(companyId);
+  const existingRows = await db
+    .select()
+    .from(salaryRecords)
+    .where(and(eq(salaryRecords.employeeId, employeeId), eq(salaryRecords.year, year), eq(salaryRecords.month, month)))
+    .limit(1);
+  const record = existingRows[0] ?? null;
+  const { period } = resolvePeriod(settings, year, month, record);
+  const start = period.start;
+  const end = addDays(period.end, 1); // exclusive
+
+  const [storedHolds, att, leaves, holidays] = await Promise.all([
+    db.select().from(salaryHolds).where(and(eq(salaryHolds.employeeId, employeeId), eq(salaryHolds.year, year), eq(salaryHolds.month, month))),
+    // Only the fields payroll uses: never load punch photos to calculate pay.
+    db
+      .select({
+        employeeId: attendance.employeeId,
+        workDate: attendance.workDate,
+        status: attendance.status,
+        punchInTime: attendance.punchInTime,
+        punchOutTime: attendance.punchOutTime,
+        earlyLeaveMinutes: attendance.earlyLeaveMinutes,
+        overtimeMinutes: attendance.overtimeMinutes,
+      })
+      .from(attendance)
+      .where(and(eq(attendance.employeeId, employeeId), gte(attendance.workDate, start), lt(attendance.workDate, end))),
+    db
+      .select({ employeeId: leaveRequests.employeeId, startDate: leaveRequests.startDate, endDate: leaveRequests.endDate })
+      .from(leaveRequests)
+      .where(
+        and(
+          eq(leaveRequests.employeeId, employeeId),
+          eq(leaveRequests.status, "approved"),
+          lt(leaveRequests.startDate, end),
+          gte(leaveRequests.endDate, start)
+        )
+      ),
+    holidayKeys(companyId, start, end),
+  ]);
+
+  return computeFromData(settings, holidays, year, month, {
+    employee: emp,
+    record,
+    storedHolds,
+    att,
+    leaves,
+  });
+}
+
+/**
+ * READ-ONLY, BULK: works out every employee's month with one query per table (not one per employee).
+ * Used for the company overview and exports. Pass `customPeriod` for an arbitrary date range.
+ */
+export async function computeAllForMonth(
+  companyId: string,
+  year: number,
+  month: number,
+  opts: { customPeriod?: Period; employeeIds?: string[] } = {}
+): Promise<SalaryComputation[]> {
+  if (opts.employeeIds && opts.employeeIds.length === 0) return [];
+  const settings = await loadSettings(companyId);
+  const empRows = await db
+    .select({ employee: employees })
+    .from(employees)
+    .innerJoin(users, eq(employees.userId, users.id))
+    .where(
+      and(
+        eq(employees.companyId, companyId),
+        eq(users.role, "employee"),
+        opts.employeeIds ? inArray(employees.id, opts.employeeIds) : undefined
+      )
+    );
+  const emps = empRows.map((r) => r.employee);
+  if (emps.length === 0) return [];
+  const ids = emps.map((e) => e.id);
+
+  const [recordRows, holdRows] = await Promise.all([
+    db
+      .select()
+      .from(salaryRecords)
+      .where(and(eq(salaryRecords.companyId, companyId), eq(salaryRecords.year, year), eq(salaryRecords.month, month), inArray(salaryRecords.employeeId, ids))),
+    db
+      .select()
+      .from(salaryHolds)
+      .where(and(eq(salaryHolds.year, year), eq(salaryHolds.month, month), inArray(salaryHolds.employeeId, ids))),
+  ]);
+  const recordByEmp = new Map(recordRows.map((r) => [r.employeeId, r]));
+  const holdsByEmp = new Map<string, SalaryHold[]>();
+  for (const h of holdRows) holdsByEmp.set(h.employeeId, [...(holdsByEmp.get(h.employeeId) ?? []), h]);
+
+  const periodByEmp = new Map<string, Period>(
+    emps.map((e): [string, Period] => [e.id, resolvePeriod(settings, year, month, recordByEmp.get(e.id) ?? null, opts.customPeriod).period])
+  );
+  let minStart = Infinity;
+  let maxEnd = -Infinity;
+  for (const p of periodByEmp.values()) {
+    minStart = Math.min(minStart, p.start.getTime());
+    maxEnd = Math.max(maxEnd, p.end.getTime());
+  }
+  const rangeStart = new Date(minStart);
+  const rangeEnd = addDays(new Date(maxEnd), 1); // exclusive
+
+  const [attRows, leaveRows, holidays] = await Promise.all([
+    db
+      .select({
+        employeeId: attendance.employeeId,
+        workDate: attendance.workDate,
+        status: attendance.status,
+        punchInTime: attendance.punchInTime,
+        punchOutTime: attendance.punchOutTime,
+        earlyLeaveMinutes: attendance.earlyLeaveMinutes,
+        overtimeMinutes: attendance.overtimeMinutes,
+      })
+      .from(attendance)
+      .where(and(eq(attendance.companyId, companyId), inArray(attendance.employeeId, ids), gte(attendance.workDate, rangeStart), lt(attendance.workDate, rangeEnd))),
+    db
+      .select({ employeeId: leaveRequests.employeeId, startDate: leaveRequests.startDate, endDate: leaveRequests.endDate })
+      .from(leaveRequests)
+      .where(
+        and(
+          eq(leaveRequests.companyId, companyId),
+          eq(leaveRequests.status, "approved"),
+          inArray(leaveRequests.employeeId, ids),
+          lt(leaveRequests.startDate, rangeEnd),
+          gte(leaveRequests.endDate, rangeStart)
+        )
+      ),
+    holidayKeys(companyId, rangeStart, rangeEnd),
+  ]);
+
+  const attByEmp = new Map<string, AttendanceRow[]>();
+  for (const r of attRows) attByEmp.set(r.employeeId, [...(attByEmp.get(r.employeeId) ?? []), r]);
+  const leavesByEmp = new Map<string, LeaveRow[]>();
+  for (const l of leaveRows) leavesByEmp.set(l.employeeId, [...(leavesByEmp.get(l.employeeId) ?? []), l]);
+
+  const now = new Date();
+  return emps.map((emp) =>
+    computeFromData(
+      settings,
+      holidays,
+      year,
+      month,
+      {
+        employee: emp,
+        record: recordByEmp.get(emp.id) ?? null,
+        customPeriod: opts.customPeriod,
+        storedHolds: opts.customPeriod ? [] : holdsByEmp.get(emp.id) ?? [],
+        att: attByEmp.get(emp.id) ?? [],
+        leaves: leavesByEmp.get(emp.id) ?? [],
+      },
+      now
+    )
+  );
 }
 
 /** Persists the computed month as a DRAFT (or refreshes an existing draft) and syncs hold rows. */

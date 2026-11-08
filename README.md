@@ -180,3 +180,18 @@ presence (present, clocked in now, absent, on leave, late, half day, pending app
 for admins the setup gaps (employees without a department or location, managers without a department).
 Salary totals are on the Salary page.
 
+
+## Salary (admin)
+
+* **Overview** for any salary cycle or custom date range, with filters for department, location and employee.
+  * *Total payable (gross)*: the basic salaries of the people shown.
+  * *Total deductions*: absent days, late arrivals, half days, unpaid leave, early leave and other deductions.
+  * *Net payable balance*: what is left to disburse after deductions, additions, overtime, extra pay and holds.
+  * The overview also shows a reconciliation line, so the figures can be checked by hand.
+* **Table**: sort by any column; search by name or code. Click a row to open that employee's payslip.
+* **Needs attention**: 3 or more leave days in the cycle, or late marks at the company limit.
+* **Excel download**: choose Company-wide, Location-wise, Department-wise or Employee-wise. Employee-wise gives one
+  sheet per person with a day-by-day breakdown. Optional photos add each employee's latest punch-in photo for the
+  period (up to 300 employees). Every export is recorded in the audit log.
+
+Salary figures are calculated in one bulk pass per request (one query per table), not one query per employee.
