@@ -161,6 +161,8 @@ export default function ReportsPage() {
               { value: "weekly", label: "Weekly" },
               { value: "monthly", label: "Monthly" },
               { value: "yearly", label: "Yearly" },
+              { value: "last30", label: "Last 30 days" },
+              { value: "last90", label: "Last 90 days (text records)" },
             ]}
           />
           <Input label="Date (period anchor)" type="date" value={date} onChange={setDate} />

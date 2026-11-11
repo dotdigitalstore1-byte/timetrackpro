@@ -65,7 +65,10 @@ function detailColumns(currency: string): Col[] {
     { header: "Overtime (min)", width: 11, value: (r) => r.overtimeMinutes },
     { header: "Overtime pay", width: 12, value: (r) => r.overtimePay, money: true },
     { header: "Extra pay", width: 12, value: (r) => r.extraPay, money: true },
-    { header: "On hold", width: 12, value: (r) => r.holds, money: true },
+    { header: "Salary date", width: 12, value: (r) => r.salaryDate },
+    { header: "Delay (days)", width: 10, value: (r) => r.delayDays },
+    { header: "Disburse on", width: 12, value: (r) => r.disburseOn },
+    { header: "Held (earlier rule)", width: 14, value: (r) => r.holds, money: true },
     { header: "Net payable", width: 14, value: (r) => r.net, money: true },
     {
       header: "Flags",
@@ -145,7 +148,7 @@ function writeDetailTable(
     "Total deductions": t.deductions,
     "Additions": items.reduce((s, i) => s + i.row.additions, 0),
     "Net payable": t.net,
-    "On hold": t.holds,
+    "Held (earlier rule)": t.holds,
   };
   allCols.forEach((c, i) => {
     const cell = totalRow.getCell(i + 1);
@@ -180,7 +183,7 @@ function writeSummary(wb: ExcelJS.Workbook, o: ExportOptions, used: Set<string>)
     [`Total payable (gross basic, ${o.currency})`, t.gross, true],
     [`Total deductions (${o.currency})`, t.deductions, true],
     [`Additions, overtime and extra pay (${o.currency})`, t.credits, true],
-    [`On hold (${o.currency})`, t.holds, true],
+    [`Held under the earlier rule (${o.currency})`, t.holds, true],
     [`Net payable balance (${o.currency})`, t.net, true],
     ["Employees", t.employees, false],
     ["Late days", t.lateDays, false],
@@ -210,7 +213,7 @@ function writeSummary(wb: ExcelJS.Workbook, o: ExportOptions, used: Set<string>)
   ws.getRow(r).font = { bold: true };
   r++;
   ws.getRow(r).values = [
-    "Gross − deductions + additions − on hold",
+    "Gross − deductions + additions (salary is paid in full on each disbursement date)",
     Number((t.gross - t.deductions + t.credits - t.holds).toFixed(2)),
   ];
   ws.getRow(r).getCell(2).numFmt = MONEY;
@@ -263,6 +266,8 @@ function writeEmployeeSheet(wb: ExcelJS.Workbook, e: ExportEmployee, o: ExportOp
     ["Work locations", r0.locations.map((l) => l.name).join(", ") || "—"],
     ["Period", o.rangeLabel],
     ["Salary status", r0.status],
+    ["Salary date", r0.salaryDate],
+    ["Disburses on", r0.disburseOn + (r0.delayDays > 0 ? ` (delayed ${r0.delayDays} day(s) for unapproved leave)` : "")],
   ];
   info.forEach(([k, v], i) => {
     ws.getCell(`A${i + 2}`).value = k;
@@ -276,7 +281,7 @@ function writeEmployeeSheet(wb: ExcelJS.Workbook, e: ExportEmployee, o: ExportOp
     ws.getCell("I1").font = { bold: true, size: 9, color: { argb: "FF64748B" } };
   }
 
-  let r = 9;
+  let r = 12;
   ws.getRow(r).values = ["Salary breakdown", `Amount (${o.currency})`];
   ws.getRow(r).font = { bold: true, color: { argb: "FFFFFFFF" } };
   ws.getRow(r).getCell(1).fill = HEADER_FILL;
@@ -293,7 +298,7 @@ function writeEmployeeSheet(wb: ExcelJS.Workbook, e: ExportEmployee, o: ExportOp
     ["Additions", r0.additions],
     ["Overtime pay", r0.overtimePay],
     ["Extra pay (unused comp-off)", r0.extraPay],
-    ["On hold (released later)", -r0.holds],
+    ["Held under the earlier rule", -r0.holds],
     ["Net payable", r0.net],
   ];
   for (const [label, value] of lines) {

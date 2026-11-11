@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { api, capturePhoto, getCurrentPosition } from "@/lib/client";
+import { api, ApiError, getCurrentPosition, withRetry } from "@/lib/client";
 import { Badge, Button, Card } from "@/components/ui";
+import CameraCapture from "@/components/CameraCapture";
 import { formatTime, toDateKey, workingHours } from "@/lib/utils";
 
 interface AttendanceRow {
@@ -23,6 +24,7 @@ export default function PunchCard({ onChanged }: { onChanged?: () => void }) {
   const [records, setRecords] = useState<AttendanceRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [punching, setPunching] = useState(false);
+  const [camera, setCamera] = useState<"in" | "out" | null>(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -47,22 +49,45 @@ export default function PunchCard({ onChanged }: { onChanged?: () => void }) {
 
   const todayRecord = records.find((r) => toDateKey(new Date(r.workDate)) === todayKey) || null;
 
-  const doPunch = async (type: "in" | "out") => {
+  // Called only with a photo from the live camera (see CameraCapture): there is no gallery path.
+  // Each attempt takes a fresh GPS fix and a fresh server challenge, so a retry never reuses stale values.
+  const doPunch = async (type: "in" | "out", photo: string) => {
+    setCamera(null);
     setError("");
     setSuccess("");
     setPunching(true);
     try {
-      const photo = await capturePhoto();
-      const pos = await getCurrentPosition();
-      await api("/api/attendance", {
-        method: "POST",
-        body: JSON.stringify({ type, photo, lat: pos.lat, lng: pos.lng }),
+      const result = await withRetry(async () => {
+        const [pos, challenge] = await Promise.all([
+          getCurrentPosition(),
+          api<{ ts: number; sig: string }>("/api/attendance/challenge"),
+        ]);
+        return api<{ duplicate?: boolean }>("/api/attendance", {
+          method: "POST",
+          body: JSON.stringify({
+            type,
+            photo,
+            lat: pos.lat,
+            lng: pos.lng,
+            accuracy: pos.accuracy,
+            fixAgeMs: pos.fixAgeMs,
+            mockLocation: nativeReportsMockLocation(),
+            challenge,
+          }),
+        });
       });
-      setSuccess(type === "in" ? "Punch-in recorded successfully." : "Punch-out recorded successfully.");
+      setSuccess(
+        result.duplicate
+          ? "This punch was already recorded."
+          : type === "in"
+            ? "Punch-in recorded successfully."
+            : "Punch-out recorded successfully."
+      );
       await load();
       onChanged?.();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Punch failed");
+      const busy = e instanceof ApiError && (e.status === 0 || e.status >= 500);
+      setError(busy ? "The server is busy right now. Your punch was not recorded. Please try again in a moment." : e instanceof Error ? e.message : "Punch failed");
     } finally {
       setPunching(false);
     }
@@ -109,9 +134,9 @@ export default function PunchCard({ onChanged }: { onChanged?: () => void }) {
         <Button
           variant="success"
           size="lg"
-          disabled={!!todayRecord?.punchInTime}
+          disabled={!!todayRecord?.punchInTime || punching}
           loading={punching}
-          onClick={() => doPunch("in")}
+          onClick={() => setCamera("in")}
           className="w-full"
         >
           {todayRecord?.punchInTime ? "✓ Punched In" : "📸 Punch In"}
@@ -119,19 +144,41 @@ export default function PunchCard({ onChanged }: { onChanged?: () => void }) {
         <Button
           variant="primary"
           size="lg"
-          disabled={!todayRecord?.punchInTime || !!todayRecord?.punchOutTime}
+          disabled={!todayRecord?.punchInTime || !!todayRecord?.punchOutTime || punching}
           loading={punching}
-          onClick={() => doPunch("out")}
+          onClick={() => setCamera("out")}
           className="w-full"
         >
           {todayRecord?.punchOutTime ? "✓ Punched Out" : "📸 Punch Out"}
         </Button>
       </div>
-      <p className="mt-2 text-center text-[11px] text-slate-400">Photo + GPS location are verified before punching.</p>
+      <p className="mt-2 text-center text-[11px] text-slate-400">Live camera photo + GPS are required. Gallery photos and mock-location (fake GPS) apps are blocked.</p>
+
+      {camera && (
+        <CameraCapture
+          title={camera === "in" ? "Punch-in photo" : "Punch-out photo"}
+          onCapture={(photo) => doPunch(camera, photo)}
+          onCancel={() => setCamera(null)}
+        />
+      )}
 
       {error && <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">{error}</p>}
       {success && <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700">{success}</p>}
       {loading && <p className="mt-3 text-center text-xs text-slate-400">Loading…</p>}
     </Card>
   );
+}
+
+/**
+ * True when the native app (Capacitor shell) reports that the OS is using a mock-location provider.
+ * The web app cannot read this itself; see README "Mock location" for the native implementation.
+ */
+function nativeReportsMockLocation(): boolean {
+  if (typeof window === "undefined") return false;
+  const bridge = (window as unknown as { TimeTrackNative?: { isMockLocation?: () => boolean } }).TimeTrackNative;
+  try {
+    return bridge?.isMockLocation?.() === true;
+  } catch {
+    return false;
+  }
 }

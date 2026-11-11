@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  computeSalary, computeStatus, dateKey, localParts, localWorkDate,
+  computeSalary, computeStatus, dateKey, holdDelayDaysOf, localParts, localWorkDate,
   monthWorkdays, parseWeeklyOff, summarizeMonth,
 } from "../src/lib/payroll.ts";
 
@@ -36,7 +36,7 @@ const baseSalary = {
   lateRule: { type: "fixed" as const, value: 100 },
   halfDayRule: { type: "percentage" as const, value: 50 },
   leaveRule: { type: "percentage" as const, value: 0 },
-  holdDaysPerOccurrence: 2, releasedHoldCount: 0, otherDeductions: [],
+  otherDeductions: [],
 };
 
 test("perfect month pays full basic", () => {
@@ -55,21 +55,24 @@ test("deductions are not double counted", () => {
   assert.equal(r.netPayable, 25400);
 });
 
-test("unapproved absence: unpaid day + separate 2-day hold per occurrence", () => {
+test("unapproved absence: unpaid day, and the salary hold only delays the disbursement date", () => {
   const d1 = new Date(Date.UTC(2026, 9, 5)), d2 = new Date(Date.UTC(2026, 9, 14));
-  const r = computeSalary({ ...baseSalary, summary: mkSummary({ presentDays: 22, absentDays: 2, unapprovedOccurrences: [d1, d2] }) });
+  const r = computeSalary({ ...baseSalary, holdDelayDays: 4, summary: mkSummary({ presentDays: 22, absentDays: 2, unapprovedOccurrences: [d1, d2] }) });
   assert.equal(r.attendanceSalary, 24000); // 2 unpaid days
-  assert.equal(r.holdDays, 4);             // 2 occurrences x 2 days
-  assert.equal(r.holdAmount, 4000);
-  assert.equal(r.totalDeductions, 0);      // holds are NOT deductions
-  assert.equal(r.netPayable, 20000);
+  assert.equal(r.holdDays, 4);             // a delay in days, not money
+  assert.equal(r.holdAmount, 0);           // nothing is held back any more
+  assert.equal(r.totalDeductions, 0);      // the hold is not a deduction
+  assert.equal(r.netPayable, 24000);       // paid in full, on the disbursement date
 });
 
-test("released holds are paid back", () => {
-  const d1 = new Date(Date.UTC(2026, 9, 5)), d2 = new Date(Date.UTC(2026, 9, 14));
-  const r = computeSalary({ ...baseSalary, releasedHoldCount: 1, summary: mkSummary({ absentDays: 2, unapprovedOccurrences: [d1, d2] }) });
-  assert.equal(r.holdDays, 2);
-  assert.equal(r.netPayable, 24000 - 2000);
+test("salary hold: 2 days of delay per unapproved day; released runs and a switched-off rule add nothing", () => {
+  const runs = [{ unapprovedDays: 1, released: false }, { unapprovedDays: 2, released: false }];
+  assert.equal(holdDelayDaysOf([{ unapprovedDays: 1, released: false }], 2, true), 2); // 1 day -> 2 days
+  assert.equal(holdDelayDaysOf([{ unapprovedDays: 2, released: false }], 2, true), 4); // 2 days -> 4 days
+  assert.equal(holdDelayDaysOf([{ unapprovedDays: 3, released: false }], 2, true), 6); // 3 days -> 6 days
+  assert.equal(holdDelayDaysOf(runs, 2, true), 6);                                    // runs add up: 3 days x 2
+  assert.equal(holdDelayDaysOf(runs, 2, false), 0);                                   // rule switched off
+  assert.equal(holdDelayDaysOf([{ unapprovedDays: 2, released: true }, { unapprovedDays: 1, released: false }], 2, true), 2);
 });
 
 test("consecutive absences are one occurrence; today/future are not absent", () => {

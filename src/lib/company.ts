@@ -7,9 +7,12 @@ import { dateKey, parseWeeklyOff, type SummaryRules } from "@/lib/payroll";
 export function policyFrom(settings: CompanySettings) {
   return {
     shiftStart: settings.shiftStart,
+    shiftEnd: settings.shiftEnd,
     graceMinutes: settings.graceMinutes,
     lateThresholdMinutes: settings.lateThresholdMinutes,
     timezone: settings.timezone || "UTC",
+    // Late-percentage rule: null when switched off.
+    absentAfterPercent: settings.absentAfterPercentEnabled ? settings.absentAfterPercent : null,
   };
 }
 
@@ -28,7 +31,8 @@ export function shiftOf(settings: CompanySettings, employee?: ShiftFields | null
 
 /** Late-arrival policy for one employee: company rules + that employee's shift start. */
 export function policyFor(settings: CompanySettings, employee?: ShiftFields | null) {
-  return { ...policyFrom(settings), shiftStart: shiftOf(settings, employee).start };
+  const shift = shiftOf(settings, employee);
+  return { ...policyFrom(settings), shiftStart: shift.start, shiftEnd: shift.end };
 }
 
 /** Company rules that affect how recorded days are counted in payroll. */

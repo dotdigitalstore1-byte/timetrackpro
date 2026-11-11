@@ -32,8 +32,146 @@ interface Holiday {
   name: string;
 }
 
+interface CompanyProfile {
+  name: string;
+  legalName: string;
+  address: string;
+  phone: string;
+  email: string;
+  website: string;
+  taxId: string;
+  logoDataUrl: string | null;
+}
+
+const LOGO_LIMIT_CHARS = 150_000;
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error("Could not read the image."));
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("That file is not a valid image."));
+    img.src = src;
+  });
+}
+
+/**
+ * Turns an uploaded picture into a small logo for the salary slips: resized to fit 240 px and encoded as PNG
+ * (kept crisp when transparent), falling back to JPEG, and smaller sizes, until it is under the size limit.
+ */
+async function makeLogo(file: File): Promise<string> {
+  if (!/^image\/(png|jpeg|webp)$/.test(file.type)) throw new Error("Upload a PNG, JPEG or WebP image.");
+  if (file.size > 5 * 1024 * 1024) throw new Error("That image is too large. Choose one under 5 MB.");
+  const img = await loadImage(await readFileAsDataUrl(file));
+  for (const side of [240, 200, 160, 120]) {
+    const scale = Math.min(1, side / Math.max(img.width, img.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(img.width * scale));
+    canvas.height = Math.max(1, Math.round(img.height * scale));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) break;
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const png = canvas.toDataURL("image/png");
+    if (png.length <= LOGO_LIMIT_CHARS) return png;
+    const jpeg = canvas.toDataURL("image/jpeg", 0.85);
+    if (jpeg.length <= LOGO_LIMIT_CHARS) return jpeg;
+  }
+  throw new Error("This logo is too detailed. Try a simpler or smaller image.");
+}
+
+/** Company name, details and logo. These appear at the top of every salary slip. */
+function CompanyProfileCard({ initial, onSaved }: { initial: CompanyProfile; onSaved: () => Promise<void> }) {
+  const [form, setForm] = useState<CompanyProfile>(initial);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => setForm(initial), [initial]);
+
+  const patch = (p: Partial<CompanyProfile>) => setForm((f) => ({ ...f, ...p }));
+
+  const onLogo = async (file: File | undefined) => {
+    if (!file) return;
+    setError("");
+    try {
+      patch({ logoDataUrl: await makeLogo(file) });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not use that image.");
+    }
+  };
+
+  const save = async () => {
+    setSaving(true);
+    setMessage("");
+    setError("");
+    try {
+      await api("/api/settings", { method: "POST", body: JSON.stringify({ company: form }) });
+      setMessage("Company profile saved. New salary slips use these details.");
+      await onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card>
+      <h3 className="mb-1 font-bold text-slate-900">Company profile &amp; salary slip branding</h3>
+      <p className="mb-3 text-xs text-slate-500">These details and the logo are printed at the top of every salary slip.</p>
+
+      <div className="mb-4 flex items-center gap-4 rounded-xl bg-slate-50 p-3">
+        <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white ring-1 ring-slate-200">
+          {form.logoDataUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={form.logoDataUrl} alt="Company logo" className="h-full w-full object-contain" />
+          ) : (
+            <span className="text-[10px] font-semibold text-slate-400">No logo</span>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <label className="inline-flex cursor-pointer items-center rounded-xl bg-white px-3.5 py-2 text-xs font-bold text-indigo-700 ring-1 ring-slate-300 hover:bg-slate-50">
+            {form.logoDataUrl ? "Change logo" : "Upload logo"}
+            <input type="file" accept="image/png,image/jpeg,image/webp" className="sr-only" onChange={(e) => void onLogo(e.target.files?.[0])} />
+          </label>
+          {form.logoDataUrl && (
+            <button type="button" onClick={() => patch({ logoDataUrl: null })} className="rounded-xl px-3 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50">
+              Remove
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Input label="Company name (shown on slips)" value={form.name} onChange={(v) => patch({ name: v })} />
+        <Input label="Legal name (optional)" value={form.legalName} onChange={(v) => patch({ legalName: v })} placeholder="Pvt. Ltd. name, if different" />
+        <Input label="Address" value={form.address} onChange={(v) => patch({ address: v })} />
+        <Input label="Phone" value={form.phone} onChange={(v) => patch({ phone: v })} />
+        <Input label="Email" type="email" value={form.email} onChange={(v) => patch({ email: v })} />
+        <Input label="Website" value={form.website} onChange={(v) => patch({ website: v })} placeholder="www.example.com" />
+        <Input label="GSTIN / PAN / registration no." value={form.taxId} onChange={(v) => patch({ taxId: v })} />
+      </div>
+
+      {error && <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">{error}</p>}
+      {message && <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700">{message}</p>}
+      <Button className="mt-4" onClick={save} loading={saving} disabled={!form.name.trim()}>
+        Save company profile
+      </Button>
+    </Card>
+  );
+}
+
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [company, setCompany] = useState<CompanyProfile | null>(null);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [hDate, setHDate] = useState("");
   const [hName, setHName] = useState("");
@@ -46,9 +184,10 @@ export default function SettingsPage() {
   const load = useCallback(async () => {
     setLoadError("");
     try {
-      const data = await api<{ settings: Settings; holidays: Holiday[] }>("/api/settings");
+      const data = await api<{ settings: Settings; holidays: Holiday[]; company: CompanyProfile | null }>("/api/settings");
       setSettings(data.settings);
       setHolidays(data.holidays ?? []);
+      setCompany(data.company ?? null);
     } catch (e) {
       setSettings(null);
       setLoadError(e instanceof Error ? e.message : "Could not load company settings");
@@ -193,6 +332,8 @@ export default function SettingsPage() {
         </Card>
 
         <div className="space-y-4">
+          {company && <CompanyProfileCard initial={company} onSaved={load} />}
+
           <Card>
             <h3 className="mb-3 font-bold text-slate-900">Company Holidays</h3>
             {holidays.length === 0 ? (

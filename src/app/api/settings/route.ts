@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { and, asc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLogs, companyHolidays, companySettings } from "@/db/schema";
+import { auditLogs, companies, companyBranding, companyHolidays, companySettings } from "@/db/schema";
 import { isValidTimezone } from "@/lib/payroll";
+import { loadCompanyProfile } from "@/lib/company-profile";
 import { getAuth } from "@/lib/auth";
 
 export async function GET() {
@@ -13,11 +14,23 @@ export async function GET() {
 
   const settings = await db.select().from(companySettings).where(eq(companySettings.companyId, companyId)).limit(1);
   const holidays = await db.select().from(companyHolidays).where(eq(companyHolidays.companyId, companyId)).orderBy(asc(companyHolidays.holidayDate));
+  const profile = await loadCompanyProfile(companyId);
 
   return NextResponse.json({
     settings: settings[0] ?? null,
     holidays,
+    company: profile,
   });
+}
+
+// ---- Company profile (name, address, tax ID, logo). Shown on salary slips.
+
+/** Logos are small: the admin's upload is resized in the browser to about 200 px wide before it is sent. */
+const MAX_LOGO_CHARS = 200_000;
+const LOGO_RE = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
+
+function clean(v: unknown, max: number): string {
+  return String(v ?? "").trim().slice(0, max);
 }
 
 export async function POST(req: Request) {
@@ -51,6 +64,7 @@ export async function POST(req: Request) {
     if (s.halfDayDeductionValue !== undefined) update.halfDayDeductionValue = String(Math.max(0, numField(s.halfDayDeductionValue, 50)));
     if (s.leaveDeductionType !== undefined) update.leaveDeductionType = s.leaveDeductionType === "fixed" ? "fixed" : "percentage";
     if (s.leaveDeductionValue !== undefined) update.leaveDeductionValue = String(Math.max(0, numField(s.leaveDeductionValue, 100)));
+    // Delay in days for each unapproved day (the salary hold rule).
     if (s.unapprovedHoldDays !== undefined) update.unapprovedHoldDays = clampInt(s.unapprovedHoldDays, 0, 30, 2);
     // Amounts are always in Indian Rupees; the currency is not configurable.
     update.currency = "₹";
@@ -81,7 +95,15 @@ export async function POST(req: Request) {
     if (s.overtimeMaxMinutesPerDay !== undefined) update.overtimeMaxMinutesPerDay = clampInt(s.overtimeMaxMinutesPerDay, 30, 720, 240);
     // ---- Salary cycle
     if (s.salaryCycleStartDay !== undefined) update.salaryCycleStartDay = clampInt(s.salaryCycleStartDay, 1, 28, 1);
-    if (s.salaryPayDelayDays !== undefined) update.salaryPayDelayDays = clampInt(s.salaryPayDelayDays, 0, 60, 5);
+    if (s.salaryDisbursementDay !== undefined) update.salaryDisbursementDay = clampInt(s.salaryDisbursementDay, 1, 28, 5);
+    if (typeof s.salaryHoldEnabled === "boolean") update.salaryHoldEnabled = s.salaryHoldEnabled;
+    // ---- Sunday / holiday pay cut
+    // ---- Late-percentage rule (auto-absent) and mid-cycle slips
+    if (typeof s.absentAfterPercentEnabled === "boolean") update.absentAfterPercentEnabled = s.absentAfterPercentEnabled;
+    if (s.absentAfterPercent !== undefined) update.absentAfterPercent = clampInt(s.absentAfterPercent, 10, 100, 50);
+    if (typeof s.midCycleSlipEnabled === "boolean") update.midCycleSlipEnabled = s.midCycleSlipEnabled;
+    if (typeof s.holidayDeductionEnabled === "boolean") update.holidayDeductionEnabled = s.holidayDeductionEnabled;
+    if (s.holidayDeductionTriggerCount !== undefined) update.holidayDeductionTriggerCount = clampInt(s.holidayDeductionTriggerCount, 1, 2, 2);
     // ---- Weekly-off work & comp-off
     if (s.leaveAccrualMode !== undefined) update.leaveAccrualMode = s.leaveAccrualMode === "lapse" ? "lapse" : "carry";
     if (typeof s.extraPayEnabled === "boolean") update.extraPayEnabled = s.extraPayEnabled;
@@ -119,6 +141,39 @@ export async function POST(req: Request) {
     }
   }
 
+  if (body.company && typeof body.company === "object") {
+    const c = body.company as Record<string, unknown>;
+    const name = clean(c.name, 200);
+    if (!name) return NextResponse.json({ error: "The company name cannot be empty." }, { status: 400 });
+    await db
+      .update(companies)
+      .set({
+        name,
+        legalName: clean(c.legalName, 200) || null,
+        address: clean(c.address, 500) || null,
+        phone: clean(c.phone, 50) || null,
+        email: clean(c.email, 200) || null,
+        website: clean(c.website, 200) || null,
+        taxId: clean(c.taxId, 50) || null,
+      })
+      .where(eq(companies.id, companyId));
+
+    if (c.logoDataUrl !== undefined) {
+      if (c.logoDataUrl === null || c.logoDataUrl === "") {
+        await db.delete(companyBranding).where(eq(companyBranding.companyId, companyId));
+      } else {
+        const logo = String(c.logoDataUrl);
+        if (logo.length > MAX_LOGO_CHARS || !LOGO_RE.test(logo)) {
+          return NextResponse.json({ error: "Upload a PNG, JPEG or WebP logo under about 150 KB." }, { status: 400 });
+        }
+        await db
+          .insert(companyBranding)
+          .values({ companyId, logoDataUrl: logo, updatedAt: new Date() })
+          .onConflictDoUpdate({ target: companyBranding.companyId, set: { logoDataUrl: logo, updatedAt: new Date() } });
+      }
+    }
+  }
+
   if (body.holiday) {
     const h = body.holiday;
     const date = String(h.date || "");
@@ -140,7 +195,7 @@ export async function POST(req: Request) {
     actorId: ctx.user.id,
     action: "settings.update",
     entity: "settings",
-    details: { body: { settings: body.settings ?? null, holiday: !!body.holiday, deleteHoliday: !!body.deleteHolidayId } },
+    details: { body: { settings: body.settings ?? null, company: !!body.company, holiday: !!body.holiday, deleteHoliday: !!body.deleteHolidayId } },
   });
 
   return NextResponse.json({ ok: true });

@@ -8,7 +8,7 @@ import { formatDate, formatTime, workingHours } from "@/lib/utils";
 import { dateKey, localWorkDate } from "@/lib/payroll";
 import { loadEmployeeOrg } from "@/lib/org";
 
-type Period = "daily" | "weekly" | "monthly" | "yearly";
+type Period = "daily" | "weekly" | "monthly" | "yearly" | "last30" | "last90";
 type Report = "attendance" | "late" | "leave" | "salary" | "deduction";
 
 function getRange(period: Period, dateStr: string | null, tz: string) {
@@ -18,7 +18,12 @@ function getRange(period: Period, dateStr: string | null, tz: string) {
   const month = base.getUTCMonth();
   let start: Date;
   let end: Date;
-  if (period === "daily") {
+  if (period === "last30" || period === "last90") {
+    // Rolling window ending on the anchor date (today by default), including that day.
+    const days = period === "last30" ? 30 : 90;
+    end = new Date(Date.UTC(year, month, base.getUTCDate() + 1));
+    start = new Date(Date.UTC(year, month, base.getUTCDate() - (days - 1)));
+  } else if (period === "daily") {
     start = new Date(Date.UTC(year, month, base.getUTCDate()));
     end = new Date(Date.UTC(year, month, base.getUTCDate() + 1));
   } else if (period === "weekly") {
@@ -148,7 +153,7 @@ export async function GET(req: Request) {
         and(
           eq(salaryRecords.companyId, companyId),
           eq(salaryRecords.year, year),
-          ...(period === "yearly" ? [] : [eq(salaryRecords.month, month + 1)])
+          ...(period === "yearly" || period.startsWith("last") ? [] : [eq(salaryRecords.month, month + 1)])
         )
       )
       .orderBy(asc(salaryRecords.year), asc(salaryRecords.month));
@@ -169,7 +174,9 @@ export async function GET(req: Request) {
         "Early-Leave Deduction": r.earlyLeaveDeduction,
         "Half-Day Deduction": r.halfDayDeduction,
         "Leave Deduction": r.leaveDeduction,
-        "Salary Hold": r.salaryHoldAmount,
+        "Salary Date": r.salaryDate ? dateKey(r.salaryDate) : "",
+        "Delay Days": r.salaryHoldDays,
+        "Disbursement Date": r.disbursementDate ? dateKey(r.disbursementDate) : "",
         "Other Deductions": r.otherDeductions.reduce((s, d) => s + Number(d.amount), 0),
         "Total Deductions": r.totalDeductions,
         "Net Payable": r.netPayable,

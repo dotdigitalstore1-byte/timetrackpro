@@ -19,6 +19,9 @@ function createPool(url: string): Pool {
     max: Number(process.env.DB_POOL_MAX ?? 10),
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
+    // A stuck query must not hold a pooled connection (and a serverless instance) for minutes during a spike.
+    statement_timeout: 20_000,
+    query_timeout: 25_000,
   });
   // A dropped idle connection must not crash the server process.
   p.on("error", (err) => {

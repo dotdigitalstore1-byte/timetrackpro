@@ -4,8 +4,9 @@ import { db } from "@/db";
 import { auditLogs, employees, salaryRecords, users } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
 import { can, canSeeEmployee, loadAccess } from "@/lib/access";
-import { addDays, currentCycleKey, cyclePeriod, dateKey, localWorkDate, recentCycles } from "@/lib/payroll";
+import { currentCycleKey, cyclePeriod, dateKey, localWorkDate, recentCycles } from "@/lib/payroll";
 import { computeMonth, finalizeMonth, releaseHold, saveDraft } from "@/lib/salary";
+import { breakdownOf } from "@/lib/salary-breakdown";
 
 /** The requested cycle ("YYYY-MM", named by the month it ends in), or the cycle that contains today. */
 function parseMonth(value: string | null | undefined, tz: string, cycleStartDay: number): { year: number; month: number } {
@@ -69,8 +70,6 @@ export async function GET(req: Request) {
     .where(and(eq(employees.companyId, companyId), eq(employees.id, employeeId)))
     .limit(1);
 
-  const r = c.result;
-  const s = c.summary;
   return NextResponse.json({
     employee: emp[0]
       ? { id: emp[0].employees.id, fullName: emp[0].users.fullName, designation: emp[0].employees.designation }
@@ -84,47 +83,16 @@ export async function GET(req: Request) {
       start: dateKey(k.start),
       end: dateKey(k.end),
     })),
-    payDate: dateKey(addDays(c.period.end, ctx.settings?.salaryPayDelayDays ?? 0)),
+    // the salary date (the chosen day of the month after the cycle) and the date it is actually paid
+    salaryDate: dateKey(c.salaryDate),
+    disbursementDate: dateKey(c.disbursementDate),
     status: c.record?.status ?? "preview", // preview (not saved) | draft | finalized | paid
     frozen: c.frozen,
-    breakdown: {
-      basicSalary: c.basicSalary,
-      dailyRate: r.dailyRate,
-      presentDays: s.presentDays,
-      absentDays: s.absentDays,
-      lateDays: s.lateDays,
-      halfDays: s.halfDays,
-      leaveDays: s.leaveDays,
-      unapprovedLeaveCount: s.unapprovedOccurrences.length,
-      attendanceSalary: r.attendanceSalary,
-      // per-late deduction plus the "every N late marks" penalty
-      lateDeduction: Math.round((r.lateDeduction + r.lateMarksDeduction) * 100) / 100,
-      earlyLeaveDays: s.earlyLeaveDays ?? 0,
-      earlyLeaveDeduction: r.earlyLeaveDeduction,
-      overtimeMinutes: s.overtimeMinutes ?? 0,
-      overtimePay: r.overtimePay,
-      weekOffWorkedDays: r.weekOffWorkedDays,
-      compOffUsed: r.compOffUsed,
-      compOffUnused: r.compOffUnused,
-      unpaidLeaveDays: r.unpaidLeaveDays,
-      extraPayDays: r.extraPayDays,
-      extraPay: r.extraPay,
-      additions: c.additions,
-      additionsTotal: r.additionsTotal,
-      halfDayDeduction: r.halfDayDeduction,
-      leaveDeduction: r.leaveDeduction,
-      otherDeductions: c.otherDeductions,
-      // permanent deductions (holds are NOT included here)
-      totalDeductions: r.totalDeductions,
-      // temporary, releasable holds are reported separately
-      salaryHoldDays: r.holdDays,
-      salaryHoldAmount: r.holdAmount,
-      netBeforeHold: r.netBeforeHold,
-      netPayable: r.netPayable,
-    },
+    breakdown: breakdownOf(c),
     holds: c.holds.map((h) => ({
       id: h.id ?? null,
       days: h.days,
+      unapprovedDays: h.unapprovedDays,
       amount: h.amount,
       reason: "Unapproved leave",
       occurrenceDate: h.occurrenceDate,
@@ -139,6 +107,7 @@ export async function GET(req: Request) {
       basicSalary: h.basicSalary,
       attendanceSalary: h.attendanceSalary,
       totalDeductions: h.totalDeductions,
+      disbursementDate: h.disbursementDate ? dateKey(h.disbursementDate) : null,
       salaryHoldAmount: h.salaryHoldAmount,
       netPayable: h.netPayable,
       status: h.status,

@@ -13,6 +13,7 @@ import {
   varchar,
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
+import type { LedgerEntry } from "@/lib/payroll";
 
 // ---------------------------------------------------------------------------
 // Multi-company SaaS schema. Every business table carries company_id and every
@@ -25,6 +26,10 @@ export const companies = pgTable("companies", {
   email: varchar("email", { length: 200 }),
   phone: varchar("phone", { length: 50 }),
   address: text("address"),
+  // Slip branding (set by the company admin under Settings → Company profile)
+  legalName: varchar("legal_name", { length: 200 }),
+  website: varchar("website", { length: 200 }),
+  taxId: varchar("tax_id", { length: 50 }), // GSTIN / PAN / registration number, shown on slips
   status: varchar("status", { length: 20 }).notNull().default("active"), // active | suspended | deactivated
   subscriptionPlan: varchar("subscription_plan", { length: 50 }).notNull().default("trial"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -107,12 +112,28 @@ export const companySettings = pgTable("company_settings", {
   overtimeMaxMinutesPerDay: integer("overtime_max_minutes_per_day").notNull().default(240),
   // ---- Salary cycle
   salaryCycleStartDay: integer("salary_cycle_start_day").notNull().default(1), // 1 = calendar month; 26 = 26th -> 25th
-  salaryPayDelayDays: integer("salary_pay_delay_days").notNull().default(5), // pay date = cycle end + N days
+  // LEGACY: only used to date finalized salaries from before salary_date was stored. Not shown in Rules any more.
+  salaryPayDelayDays: integer("salary_pay_delay_days").notNull().default(5),
+  // Salary date: the salary of a cycle is paid on this day of the month AFTER the cycle ends (1–28).
+  salaryDisbursementDay: integer("salary_disbursement_day").notNull().default(5),
+  // Salary hold: each unapproved day delays the disbursement date by unapprovedHoldDays (ON by default).
+  salaryHoldEnabled: boolean("salary_hold_enabled").notNull().default(true),
   dailyRateBasis: varchar("daily_rate_basis", { length: 10 }).notNull().default("fixed"), // legacy: salaries now always use a 30-day month
 
   // ---- Weekly-off work & comp-off (Extra pay is OFF by default)
   extraPayEnabled: boolean("extra_pay_enabled").notNull().default(false), // pay unused comp-off at cycle end
   extraPayRate: numeric("extra_pay_rate", { precision: 4, scale: 2 }).notNull().default("1"), // × daily rate per day
+
+  // ---- Sunday / holiday pay cut: when an employee takes unauthorized leave around a weekly off or holiday
+  holidayDeductionEnabled: boolean("holiday_deduction_enabled").notNull().default(false),
+  holidayDeductionTriggerCount: integer("holiday_deduction_trigger_count").notNull().default(2), // 1 or 2 adjacent unauthorized days
+
+  // ---- Late-percentage rule: punching in after this % of the shift has passed marks the day absent (OFF by default)
+  absentAfterPercentEnabled: boolean("absent_after_percent_enabled").notNull().default(false),
+  absentAfterPercent: integer("absent_after_percent").notNull().default(50),
+
+  // ---- Salary slips: allow a slip for the cycle that is still running (e.g. an employee resigning mid-month)
+  midCycleSlipEnabled: boolean("mid_cycle_slip_enabled").notNull().default(false),
 
   // ---- Leave accrual: 1 leave per month. "carry" = balance accumulates; "lapse" = a month's leave must be used that month
   leaveAccrualMode: varchar("leave_accrual_mode", { length: 10 }).notNull().default("carry"),
@@ -390,8 +411,15 @@ export const salaryRecords = pgTable(
   // the exact pay period this record covers (kept so history stays right if the cycle setting changes later)
   periodStart: timestamp("period_start", { withTimezone: true }),
   periodEnd: timestamp("period_end", { withTimezone: true }),
+  holidayDeductionDays: integer("holiday_deduction_days").notNull().default(0),
+  holidayDeduction: numeric("holiday_deduction", { precision: 12, scale: 2 }).notNull().default("0"),
   salaryHoldDays: integer("salary_hold_days").notNull().default(0),
-  salaryHoldAmount: numeric("salary_hold_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  salaryHoldAmount: numeric("salary_hold_amount", { precision: 12, scale: 2 }).notNull().default("0"), // legacy money hold; always 0 for new calculations
+  // The date the salary is due, and the date it is actually disbursed after any unapproved-day delay.
+  salaryDate: timestamp("salary_date", { withTimezone: true }),
+  disbursementDate: timestamp("disbursement_date", { withTimezone: true }),
+  // The day-wise deduction log, frozen at finalization. NULL = finalized before the log existed.
+  deductionLedger: jsonb("deduction_ledger").$type<LedgerEntry[]>(),
   totalDeductions: numeric("total_deductions", { precision: 14, scale: 2 }).notNull().default("0"),
   netPayable: numeric("net_payable", { precision: 14, scale: 2 }).notNull().default("0"),
   status: varchar("status", { length: 20 }).notNull().default("draft"), // draft | finalized | paid
@@ -428,6 +456,47 @@ export const salaryHolds = pgTable(
   (t) => [uniqueIndex("salary_hold_occurrence_uq").on(t.employeeId, t.occurrenceDate)]
 );
 
+// An employee asks for the slip of a finalized cycle; the admin approves it. Approved slips are downloadable
+// by the employee until `availableUntil` (SLIP_ACCESS_DAYS after approval), then the employee loses access.
+export const salarySlipRequests = pgTable(
+  "salary_slip_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    employeeId: uuid("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    year: integer("year").notNull(),
+    month: integer("month").notNull(), // salary cycle, named by the month it ends in
+    status: varchar("status", { length: 20 }).notNull().default("pending"), // pending | approved | rejected
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    decidedBy: uuid("decided_by").references(() => users.id),
+    rejectionReason: text("rejection_reason"),
+    availableUntil: timestamp("available_until", { withTimezone: true }),
+    // Set when the slip is for a cycle that was still running at approval: the figures are frozen then, as a
+    // provisional slip. Once the cycle is finalized, the final figures are shown instead.
+    provisional: boolean("provisional").notNull().default(false),
+    snapshot: jsonb("snapshot").$type<Record<string, unknown> | null>(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("salary_slip_requests_employee_month_uq").on(t.employeeId, t.year, t.month),
+    index("salary_slip_requests_company_status_idx").on(t.companyId, t.status),
+  ]
+);
+
+// The company logo, kept apart from the companies row so it is not loaded on every authenticated request.
+export const companyBranding = pgTable("company_branding", {
+  companyId: uuid("company_id")
+    .primaryKey()
+    .references(() => companies.id, { onDelete: "cascade" }),
+  logoDataUrl: text("logo_data_url"), // small PNG/JPEG/WebP data URL (see /api/settings)
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const auditLogs = pgTable("audit_logs", {
   id: uuid("id").primaryKey().defaultRandom(),
   companyId: uuid("company_id").references(() => companies.id, { onDelete: "cascade" }),
@@ -457,6 +526,7 @@ export type LeaveRequest = typeof leaveRequests.$inferSelect;
 export type SalaryRecord = typeof salaryRecords.$inferSelect;
 export type SalaryHold = typeof salaryHolds.$inferSelect;
 export type CompanySettings = typeof companySettings.$inferSelect;
+export type SalarySlipRequest = typeof salarySlipRequests.$inferSelect;
 export type Geofence = typeof geofences.$inferSelect;
 export type Department = typeof departments.$inferSelect;
 export type CompanyHoliday = typeof companyHolidays.$inferSelect;

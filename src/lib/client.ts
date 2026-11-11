@@ -44,6 +44,8 @@ export interface MeData {
     leaveDeductionType: string;
     leaveDeductionValue: string;
     unapprovedHoldDays: number;
+    salaryHoldEnabled: boolean;
+    salaryDisbursementDay: number;
     workDaysPerMonth: number;
     currency: string;
     approvalLevels: number;
@@ -203,68 +205,44 @@ export function useMe() {
   return { me: state.data, loading: state.loading, error: state.error, refresh };
 }
 
-export function getCurrentPosition(): Promise<{ lat: number; lng: number }> {
+/** Current GPS fix. `fixAgeMs` is how old the device's reading is; the server refuses stale readings. */
+export function getCurrentPosition(): Promise<{ lat: number; lng: number; accuracy: number; fixAgeMs: number }> {
   return new Promise((resolve, reject) => {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
       reject(new Error("Geolocation is not supported on this device"));
       return;
     }
     navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      (pos) =>
+        resolve({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+          fixAgeMs: Math.max(0, Date.now() - pos.timestamp),
+        }),
       (err) => reject(new Error(`Unable to get location: ${err.message}`)),
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 } // always a fresh fix, never a cached one
     );
   });
 }
 
-export function compressImage(file: File, maxSize = 640, quality = 0.6): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const img = new Image();
-      img.onload = () => {
-        const scale = Math.min(1, maxSize / Math.max(img.width, img.height));
-        const w = Math.round(img.width * scale);
-        const h = Math.round(img.height * scale);
-        const canvas = document.createElement("canvas");
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          reject(new Error("Canvas not supported"));
-          return;
-        }
-        ctx.drawImage(img, 0, 0, w, h);
-        resolve(canvas.toDataURL("image/jpeg", quality));
-      };
-      img.onerror = () => reject(new Error("Could not read image"));
-      img.src = reader.result as string;
-    };
-    reader.onerror = () => reject(new Error("Could not read file"));
-    reader.readAsDataURL(file);
-  });
-}
-
-export function capturePhoto(): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = "image/*";
-    input.capture = "user";
-    input.onchange = async () => {
-      const file = input.files?.[0];
-      if (!file) {
-        reject(new Error("No photo captured"));
-        return;
-      }
-      try {
-        resolve(await compressImage(file));
-      } catch (e) {
-        reject(e instanceof Error ? e : new Error("Photo processing failed"));
-      }
-    };
-    input.click();
-  });
+/**
+ * Runs `attempt` again only when the failure is temporary: a dropped connection, a timeout, or the server being
+ * busy (502/503/504). Validation errors are never retried. Use it only for requests the server treats as idempotent.
+ */
+export async function withRetry<T>(attempt: () => Promise<T>, tries = 3): Promise<T> {
+  let last: unknown;
+  for (let i = 0; i < tries; i++) {
+    try {
+      return await attempt();
+    } catch (e) {
+      last = e;
+      const temporary = e instanceof ApiError && (e.status === 0 || e.status === 502 || e.status === 503 || e.status === 504);
+      if (!temporary || i === tries - 1) throw e;
+      await new Promise((r) => setTimeout(r, 800 * (i + 1) + Math.random() * 600));
+    }
+  }
+  throw last;
 }
 
 export function downloadBlob(content: BlobPart, filename: string, type: string) {

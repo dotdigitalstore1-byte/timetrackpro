@@ -52,6 +52,8 @@ export async function GET() {
           leaveDeductionType: settings.leaveDeductionType,
           leaveDeductionValue: settings.leaveDeductionValue,
           unapprovedHoldDays: settings.unapprovedHoldDays,
+          salaryHoldEnabled: settings.salaryHoldEnabled,
+          salaryDisbursementDay: settings.salaryDisbursementDay,
           workDaysPerMonth: settings.workDaysPerMonth,
           currency: settings.currency,
           approvalLevels: settings.approvalLevels,

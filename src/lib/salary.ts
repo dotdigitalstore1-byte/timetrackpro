@@ -14,18 +14,32 @@ import type { CompanySettings, Employee, SalaryHold, SalaryRecord } from "@/db/s
 import { holidayKeys, shiftOf, summaryRulesOf, weeklyOffOf } from "@/lib/company";
 import {
   addDays,
+  buildDeductionLedger,
   computeSalary,
   cyclePeriod,
+  DEFAULT_SALARY_DISBURSEMENT_DAY,
   dateKey,
+  holdDelayDaysOf,
+  holidayDeductionBlocks,
+  localParts,
   localWorkDate,
+  salaryDateOf,
   SALARY_BASE_DAYS,
   shiftHours,
   summarizeMonth,
+  type AbsenceContext,
   type DayRecord,
+  type LedgerEntry,
   type MonthSummary,
   type Period,
   type SalaryResult,
 } from "@/lib/payroll";
+
+/**
+ * Days loaded before and after a pay period. The Sunday / holiday rule looks at the working day just outside a
+ * block of off-days, which can fall in the neighbouring cycle, so records are loaded this far beyond the period.
+ */
+export const HOLIDAY_CONTEXT_DAYS = 7;
 
 export interface SalaryComputation {
   employee: Employee;
@@ -40,13 +54,17 @@ export interface SalaryComputation {
   period: Period; // the pay period this cycle covers (inclusive)
   holds: {
     occurrenceDate: Date;
-    days: number;
-    amount: number;
+    unapprovedDays: number; // unapproved days in this run
+    days: number; // disbursement delay this run adds: unapproved days x delay per day
+    amount: number; // money held under the earlier rule (0 for every new calculation)
     status: "active" | "released";
     id?: string;
   }[];
   record: SalaryRecord | null; // persisted row, if any
   frozen: boolean; // finalized / paid: figures come from the stored record
+  salaryDate: Date; // the day the salary is due: the chosen day of the month after the cycle ends
+  disbursementDate: Date; // when it is paid: the salary date plus the hold delay
+  ledger: LedgerEntry[] | null; // day-wise deduction log; null = finalized before the log was recorded
 }
 
 function rule(type: string, value: string | number) {
@@ -114,8 +132,9 @@ export function computeFromData(
   const emp = input.employee;
   const record = input.customPeriod ? null : input.record;
   const { period, frozen } = resolvePeriod(settings, year, month, record, input.customPeriod);
+  const tz = settings.timezone || "UTC";
 
-  const holdByDay = new Map(input.storedHolds.map((h) => [dateKey(h.occurrenceDate), h]));
+  const storedHoldByDay = new Map(input.storedHolds.map((h) => [dateKey(h.occurrenceDate), h]));
   const otherDeductions = (record?.otherDeductions ?? []) as { label: string; amount: number }[];
   const additions = (record?.additions ?? []) as { label: string; amount: number }[];
 
@@ -127,49 +146,130 @@ export function computeFromData(
       hasPunchOut: !!r.punchOutTime,
       earlyLeaveMinutes: r.earlyLeaveMinutes,
       overtimeMinutes: r.overtimeMinutes,
+      punchInMinutes: r.punchInTime ? localParts(r.punchInTime, tz).minutes : null,
+      punchOutMinutes: r.punchOutTime ? localParts(r.punchOutTime, tz).minutes : null,
     });
   }
+
+  const weeklyOff = weeklyOffOf(settings);
+  const todayLocal = localWorkDate(now, tz);
+  const joinDate = localWorkDate(emp.hireDate, tz);
+  const approvedLeaves = input.leaves.map((l) => ({ start: l.startDate, end: l.endDate }));
 
   const summary = summarizeMonth({
     year,
     month,
     period,
     rules: summaryRulesOf(settings),
-    weeklyOff: weeklyOffOf(settings),
+    weeklyOff,
     holidays,
     records,
-    approvedLeaves: input.leaves.map((l) => ({ start: l.startDate, end: l.endDate })),
-    todayLocal: localWorkDate(now, settings.timezone),
-    joinDate: localWorkDate(emp.hireDate, settings.timezone),
+    approvedLeaves,
+    todayLocal,
+    joinDate,
   });
 
-  const releasedCount = summary.unapprovedOccurrences.filter(
-    (d) => holdByDay.get(dateKey(d))?.status === "released"
-  ).length;
+  // ---- Salary hold: every unapproved day delays the disbursement date. Released runs do not delay.
+  const holdsEnabled = !!settings.salaryHoldEnabled;
+  const delayPerDay = Math.max(0, settings.unapprovedHoldDays ?? 2);
+  const runs = summary.unapprovedOccurrences.map((d, idx) => {
+    const stored = storedHoldByDay.get(dateKey(d));
+    return {
+      occurrenceDate: d,
+      unapprovedDays: summary.unapprovedRunLengths[idx] ?? 1,
+      released: stored?.status === "released",
+      stored,
+    };
+  });
+  const activeDelayDays = holdDelayDaysOf(
+    runs.map((r) => ({ unapprovedDays: r.unapprovedDays, released: r.released })),
+    delayPerDay,
+    holdsEnabled
+  );
+  // A finalized month lists the runs it stored; a draft lists every run while the rule is on.
+  const holds = (frozen ? runs.filter((r) => r.stored) : holdsEnabled ? runs : []).map((r) => {
+    const legacyAmount = Number(r.stored?.amount ?? 0); // money held under the earlier rule
+    const delay =
+      frozen && r.stored
+        ? legacyAmount > 0 ? 0 : r.stored.days
+        : holdsEnabled ? r.unapprovedDays * delayPerDay : 0;
+    return {
+      occurrenceDate: r.occurrenceDate,
+      unapprovedDays: r.unapprovedDays,
+      days: delay,
+      amount: frozen ? legacyAmount : 0,
+      status: (r.released ? "released" : "active") as "active" | "released",
+      id: r.stored?.id,
+    };
+  });
 
-  const holdDaysEach = settings.unapprovedHoldDays ?? 2;
+  // ---- Dates. A finalized salary keeps the dates it was calculated with.
+  const legacyHold = frozen && !!record && Number(record.salaryHoldAmount) > 0; // finalized under the money-hold rule
+  const salaryDate = frozen
+    ? record?.salaryDate ?? addDays(period.end, settings.salaryPayDelayDays ?? 0)
+    : salaryDateOf(year, month, settings.salaryDisbursementDay ?? DEFAULT_SALARY_DISBURSEMENT_DAY);
+  const delayDays = frozen && record ? (legacyHold ? 0 : record.salaryHoldDays) : activeDelayDays;
+  const disbursementDate = frozen ? record?.disbursementDate ?? salaryDate : addDays(salaryDate, delayDays);
+
   const basicSalary = record && record.status !== "draft" ? Number(record.basicSalary) : Number(emp.basicSalary);
+
+  // Sunday / holiday pay cut (company rule). Finalized months keep the figure stored at finalization.
+  const absence: AbsenceContext = {
+    weeklyOff,
+    holidays,
+    records,
+    approvedLeaves,
+    todayLocal,
+    joinDate,
+    loadedStart: addDays(period.start, -HOLIDAY_CONTEXT_DAYS),
+    loadedEnd: addDays(period.end, HOLIDAY_CONTEXT_DAYS),
+  };
+  const holidayBlocks =
+    settings.holidayDeductionEnabled && !frozen
+      ? holidayDeductionBlocks(period, absence, settings.holidayDeductionTriggerCount ?? 2)
+      : [];
 
   // Standard month: the daily rate is always basic / 30, whatever the calendar length of the cycle.
   const shift = shiftOf(settings, emp);
+  const lateRule = rule(settings.lateDeductionType, settings.lateDeductionValue);
+  const halfDayRule = rule(settings.halfDayDeductionType, settings.halfDayDeductionValue);
+  const leaveRule = rule(settings.leaveDeductionType, settings.leaveDeductionValue);
+  const earlyLeaveRule = rule(settings.earlyLeaveDeductionType, settings.earlyLeaveDeductionValue);
+  const lateMarks = { limit: settings.lateMarksLimit, penaltyDays: Number(settings.lateMarksPenaltyDays) };
 
   const result = computeSalary({
     basicSalary,
     workDaysPerMonth: SALARY_BASE_DAYS,
     summary,
-    earlyLeaveRule: rule(settings.earlyLeaveDeductionType, settings.earlyLeaveDeductionValue),
-    lateMarks: { limit: settings.lateMarksLimit, penaltyDays: Number(settings.lateMarksPenaltyDays) },
+    earlyLeaveRule,
+    lateMarks,
     overtime: settings.overtimeEnabled ? { rate: Number(settings.overtimeRate) } : undefined,
     shiftHours: shiftHours(shift.start, shift.end),
     additions,
-    lateRule: rule(settings.lateDeductionType, settings.lateDeductionValue),
-    halfDayRule: rule(settings.halfDayDeductionType, settings.halfDayDeductionValue),
-    leaveRule: rule(settings.leaveDeductionType, settings.leaveDeductionValue),
-    holdDaysPerOccurrence: holdDaysEach,
-    releasedHoldCount: releasedCount,
+    lateRule,
+    halfDayRule,
+    leaveRule,
+    holdDelayDays: activeDelayDays,
     otherDeductions,
     extraPay: { enabled: !!settings.extraPayEnabled, rate: Number(settings.extraPayRate) || 1 },
+    holidayDeductionDays: holidayBlocks.length,
   });
+
+  // The day-wise log: built live for an open cycle, and frozen with the salary when it is finalized.
+  const ledger: LedgerEntry[] | null = frozen
+    ? record?.deductionLedger ?? null
+    : buildDeductionLedger({
+        summary,
+        dailyRate: basicSalary / SALARY_BASE_DAYS,
+        lateRule,
+        halfDayRule,
+        leaveRule,
+        earlyLeaveRule,
+        lateMarks,
+        compOffUsed: result.compOffUsed,
+        holidayBlocks,
+        otherDeductions,
+      });
 
   // Finalized / paid months are frozen: show exactly what was stored at finalization.
   let finalResult: SalaryResult = result;
@@ -188,7 +288,7 @@ export function computeFromData(
       overtimePay: n(record.overtimePay),
       additionsTotal: additions.reduce((t, a) => t + Number(a.amount || 0), 0),
       totalDeductions: n(record.totalDeductions),
-      holdDays: record.salaryHoldDays,
+      holdDays: delayDays,
       holdAmount: n(record.salaryHoldAmount),
       netBeforeHold: n(record.netPayable) + n(record.salaryHoldAmount),
       netPayable: n(record.netPayable),
@@ -198,6 +298,8 @@ export function computeFromData(
       unpaidLeaveDays: Math.max(0, n(record.leaveDays) - record.compOffUsed),
       extraPayDays: record.extraPayDays,
       extraPay: n(record.extraPayAmount),
+      holidayDeductionDays: record.holidayDeductionDays,
+      holidayDeduction: n(record.holidayDeduction),
     };
     finalSummary = {
       ...summary,
@@ -210,17 +312,6 @@ export function computeFromData(
       overtimeMinutes: record.overtimeMinutes,
     };
   }
-
-  const holds = summary.unapprovedOccurrences.map((d) => {
-    const stored = holdByDay.get(dateKey(d));
-    return {
-      occurrenceDate: d,
-      days: holdDaysEach,
-      amount: Math.round(holdDaysEach * finalResult.dailyRate * 100) / 100,
-      status: (stored?.status === "released" ? "released" : "active") as "active" | "released",
-      id: stored?.id,
-    };
-  });
 
   return {
     employee: emp,
@@ -236,6 +327,9 @@ export function computeFromData(
     holds,
     record,
     frozen,
+    salaryDate,
+    disbursementDate,
+    ledger,
   };
 }
 
@@ -265,6 +359,9 @@ export async function computeMonth(
   const start = period.start;
   const end = addDays(period.end, 1); // exclusive
 
+  // Loaded a little wider than the period so the Sunday / holiday rule can see the days either side of it.
+  const loadStart = addDays(start, -HOLIDAY_CONTEXT_DAYS);
+  const loadEnd = addDays(end, HOLIDAY_CONTEXT_DAYS);
   const [storedHolds, att, leaves, holidays] = await Promise.all([
     db.select().from(salaryHolds).where(and(eq(salaryHolds.employeeId, employeeId), eq(salaryHolds.year, year), eq(salaryHolds.month, month))),
     // Only the fields payroll uses: never load punch photos to calculate pay.
@@ -279,7 +376,7 @@ export async function computeMonth(
         overtimeMinutes: attendance.overtimeMinutes,
       })
       .from(attendance)
-      .where(and(eq(attendance.employeeId, employeeId), gte(attendance.workDate, start), lt(attendance.workDate, end))),
+      .where(and(eq(attendance.employeeId, employeeId), gte(attendance.workDate, loadStart), lt(attendance.workDate, loadEnd))),
     db
       .select({ employeeId: leaveRequests.employeeId, startDate: leaveRequests.startDate, endDate: leaveRequests.endDate })
       .from(leaveRequests)
@@ -287,11 +384,11 @@ export async function computeMonth(
         and(
           eq(leaveRequests.employeeId, employeeId),
           eq(leaveRequests.status, "approved"),
-          lt(leaveRequests.startDate, end),
-          gte(leaveRequests.endDate, start)
+          lt(leaveRequests.startDate, loadEnd),
+          gte(leaveRequests.endDate, loadStart)
         )
       ),
-    holidayKeys(companyId, start, end),
+    holidayKeys(companyId, loadStart, loadEnd),
   ]);
 
   return computeFromData(settings, holidays, year, month, {
@@ -353,8 +450,9 @@ export async function computeAllForMonth(
     minStart = Math.min(minStart, p.start.getTime());
     maxEnd = Math.max(maxEnd, p.end.getTime());
   }
-  const rangeStart = new Date(minStart);
-  const rangeEnd = addDays(new Date(maxEnd), 1); // exclusive
+  // Wider than the periods so the Sunday / holiday rule can see the days either side (see HOLIDAY_CONTEXT_DAYS).
+  const rangeStart = addDays(new Date(minStart), -HOLIDAY_CONTEXT_DAYS);
+  const rangeEnd = addDays(new Date(maxEnd), 1 + HOLIDAY_CONTEXT_DAYS); // exclusive
 
   const [attRows, leaveRows, holidays] = await Promise.all([
     db
@@ -436,8 +534,13 @@ export async function saveDraft(companyId: string, employeeId: string, year: num
     compOffUnused: result.compOffUnused,
     extraPayDays: result.extraPayDays,
     extraPayAmount: result.extraPay.toFixed(2),
+    holidayDeductionDays: result.holidayDeductionDays,
+    holidayDeduction: result.holidayDeduction.toFixed(2),
     periodStart: c.period.start,
     periodEnd: c.period.end,
+    salaryDate: c.salaryDate,
+    disbursementDate: c.disbursementDate,
+    deductionLedger: c.ledger ?? [],
     halfDayDeduction: result.halfDayDeduction.toFixed(2),
     leaveDeduction: result.leaveDeduction.toFixed(2),
     otherDeductions: c.otherDeductions,
@@ -455,7 +558,8 @@ export async function saveDraft(companyId: string, employeeId: string, year: num
     .onConflictDoUpdate({ target: [salaryRecords.employeeId, salaryRecords.year, salaryRecords.month], set: values })
     .returning();
 
-  // Sync hold rows: keep existing (incl. released) ones, add new occurrences, drop vanished ones.
+  // Sync hold rows: keep existing ones (so releases stick), refresh the delay of active ones, add new runs,
+  // and drop runs that have vanished or whose hold rule is now switched off.
   const existing = await db
     .select()
     .from(salaryHolds)
@@ -464,8 +568,15 @@ export async function saveDraft(companyId: string, employeeId: string, year: num
   const have = new Set<string>();
   for (const h of existing) {
     const key = dateKey(h.occurrenceDate);
-    if (!wanted.has(key)) await db.delete(salaryHolds).where(eq(salaryHolds.id, h.id));
-    else have.add(key);
+    const want = wanted.get(key);
+    if (!want) {
+      await db.delete(salaryHolds).where(eq(salaryHolds.id, h.id));
+      continue;
+    }
+    have.add(key);
+    if (h.status === "active" && h.days !== want.days) {
+      await db.update(salaryHolds).set({ days: want.days }).where(eq(salaryHolds.id, h.id));
+    }
   }
   const toInsert = c.holds.filter((h) => !have.has(dateKey(h.occurrenceDate)));
   if (toInsert.length) {
@@ -477,11 +588,12 @@ export async function saveDraft(companyId: string, employeeId: string, year: num
         year,
         occurrenceDate: h.occurrenceDate,
         days: h.days,
-        amount: h.amount.toFixed(2),
+        amount: "0.00",
         reason: "Unapproved leave",
       }))
     );
   }
+
   return rows[0];
 }
 
@@ -503,7 +615,10 @@ export async function finalizeMonth(companyId: string, employeeId: string, year:
   return row;
 }
 
-/** Releasing a hold returns that amount to the employee (only while the month is still a draft or finalized-unpaid). */
+/**
+ * Releasing a hold cancels that run's disbursement delay, so those days are paid on the salary date.
+ * Holds from before the delay rule (which held money back) are paid out in money, as before.
+ */
 export async function releaseHold(companyId: string, holdId: string, actorId: string) {
   const rows = await db
     .select()
@@ -519,26 +634,35 @@ export async function releaseHold(companyId: string, holdId: string, actorId: st
     .set({ status: "released", releasedAt: new Date(), releasedBy: actorId })
     .where(eq(salaryHolds.id, holdId));
 
-  // Re-derive the stored record so held/net figures stay consistent.
+  // Re-derive the stored record so the delay, the disbursement date and the net stay consistent.
   const rec = await db
     .select()
     .from(salaryRecords)
     .where(and(eq(salaryRecords.employeeId, hold.employeeId), eq(salaryRecords.year, hold.year), eq(salaryRecords.month, hold.month)))
     .limit(1);
-  if (rec[0]) {
-    const releasedAmount = Number(hold.amount);
-    const newHoldAmount = Math.max(0, Number(rec[0].salaryHoldAmount) - releasedAmount);
-    const newHoldDays = Math.max(0, rec[0].salaryHoldDays - hold.days);
-    const net = Number(rec[0].netPayable) + releasedAmount;
-    await db
-      .update(salaryRecords)
-      .set({
-        salaryHoldAmount: newHoldAmount.toFixed(2),
-        salaryHoldDays: newHoldDays,
-        netPayable: net.toFixed(2),
-        updatedAt: new Date(),
-      })
-      .where(eq(salaryRecords.id, rec[0].id));
+  const row = rec[0];
+  if (row) {
+    const legacyAmount = Number(hold.amount);
+    if (legacyAmount > 0) {
+      await db
+        .update(salaryRecords)
+        .set({
+          salaryHoldAmount: Math.max(0, Number(row.salaryHoldAmount) - legacyAmount).toFixed(2),
+          netPayable: (Number(row.netPayable) + legacyAmount).toFixed(2),
+          updatedAt: new Date(),
+        })
+        .where(eq(salaryRecords.id, row.id));
+    } else {
+      const delay = Math.max(0, row.salaryHoldDays - hold.days);
+      await db
+        .update(salaryRecords)
+        .set({
+          salaryHoldDays: delay,
+          disbursementDate: row.salaryDate ? addDays(row.salaryDate, delay) : row.disbursementDate,
+          updatedAt: new Date(),
+        })
+        .where(eq(salaryRecords.id, row.id));
+    }
   }
   await db.insert(auditLogs).values({
     companyId,

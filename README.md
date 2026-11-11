@@ -14,7 +14,8 @@ a mobile app (Android/desktop install) and a responsive web app.
   editable later). Lateness, cool-off and early leave are measured against it.
 * **Rules** (company admin) – cool-off (grace) time, half-day cut-off, late marks, early leave, overtime, deductions
   and the salary cycle, each with a live example.
-* **Salary cycle** – calendar month or a custom cycle (e.g. 26th → 25th) with a pay date; bonuses/allowances and
+* **Salary cycle** – calendar month or a custom cycle (e.g. 26th → 25th). Each cycle is paid on the company's **salary date**
+  (a day from the 1st to the 28th of the month after the cycle ends, set under Rules); bonuses/allowances and
   overtime appear on the payslip.
 * **Departments** – a company admin can add unlimited departments (rename, deactivate, delete).
 * **Work locations** – a company admin can add unlimited locations (name, address, GPS point + punch radius).
@@ -95,11 +96,16 @@ Deploy to Vercel: add `DATABASE_URL`, `SUPER_ADMIN_*` as environment variables. 
 * **Attendance salary** = basic − (unapproved absent days × daily rate).
 * **Late / half-day / approved-leave deductions** = per-day amount (fixed or % of daily rate). Approved leave at
   0 % is paid leave; at 100 % it is unpaid. Nothing is deducted twice.
-* **Unapproved leave** = a working day with no punch-in and no approved leave. A run of consecutive
-  unapproved working days is **one occurrence** → one hold of `hold days` (default 2) × daily rate.
-  Each further occurrence in the month adds another hold. Holds are stored as separate rows, are **not**
-  deductions, and an admin can release them.
-* **Payable now** = attendance salary − deductions − active holds.
+* **Unapproved leave** = a working day with no punch-in and no approved leave. It is unpaid (one daily rate).
+* **Salary hold** (Rules → Salary hold, ON by default). Every unapproved day delays the **disbursement date** by
+  `delay per unapproved day` (default 2) days, counted from the salary date. 1 day → 2 days, 2 days → 4 days,
+  3 days → 6 days. The salary is **not** reduced; it is paid in full on the later date. Each run of unapproved days is
+  a hold row, and an admin can release it, which cancels that run's delay. Switching the rule OFF removes all delays.
+* **Net payable** = attendance salary − deductions + additions, overtime and extra pay. The hold does not change it.
+* **Day-wise deduction log**: every amount taken off, on the date it applies to, with the reason (late with the punch
+  time, half day, early leave, unpaid leave, unapproved absence, Sunday/holiday cut, late marks, manual). It is shown
+  to the admin and the employee on the salary page and on the payslip. It is built from the same day classification
+  as the totals, so the two always agree. Finalized salaries keep the log they were calculated with.
 * A month can be finalized only after it ends. Finalized/paid months are frozen; history never changes.
 * Weekly offs and company holidays are never counted as absences. "Today" and shift times use the company timezone.
 
@@ -110,11 +116,11 @@ Deploy to Vercel: add `DATABASE_URL`, `SUPER_ADMIN_*` as environment variables. 
   (new companies get the browser's timezone at sign-up). Late/half-day status depends on it.
 * Photos are stored in the database (compressed JPEG ≈ 50 KB) and served only through the authorised
   `/api/attendance/:id/photo` endpoint. For large volumes move them to object storage.
-* **Photo retention (45 days):** punch photos are deleted 45 days after their work date; the attendance record, times
-  and salary figures are kept. Deletion runs when an admin opens **Photo audit** and from a scheduled job:
-  `POST /api/maintenance/purge-photos` with header `Authorization: Bearer $CRON_SECRET`. Set `CRON_SECRET` to a long
-  random value and schedule that request once a day (e.g. a Coolify scheduled task). Without it the endpoint refuses to run,
-  and photos are still cleared whenever an admin opens Photo audit.
+* **Photo retention (45 days):** punch photos are deleted 45 days after their work date; the attendance row, times and
+  salary figures are kept. **Attendance records without photos are kept 90 days**, then deleted (see *Retention* below).
+  Deletion runs from a scheduled job: `POST /api/maintenance/purge-photos` with header `Authorization: Bearer $CRON_SECRET`.
+  Set `CRON_SECRET` to a long random value and schedule that request once a day (e.g. a Coolify scheduled task). Without it the
+  endpoint refuses to run, and photos are still cleared whenever an admin opens Photo audit.
 * **Photo audit** (company admin, under *More*): review punch photos by salary cycle, employee and department in a grid
   of large photos, enlarge any photo and download it individually. **Download Excel** exports the attendance data for the
   same filters; **with photos** embeds the punch photos in the sheet (limited to 400 records per export). Download
@@ -186,7 +192,7 @@ Salary totals are on the Salary page.
 * **Overview** for any salary cycle or custom date range, with filters for department, location and employee.
   * *Total payable (gross)*: the basic salaries of the people shown.
   * *Total deductions*: absent days, late arrivals, half days, unpaid leave, early leave and other deductions.
-  * *Net payable balance*: what is left to disburse after deductions, additions, overtime, extra pay and holds.
+  * *Net payable balance*: what is left to disburse after deductions, additions, overtime and extra pay. Each employee's salary date and disbursement date are listed too.
   * The overview also shows a reconciliation line, so the figures can be checked by hand.
 * **Table**: sort by any column; search by name or code. Click a row to open that employee's payslip.
 * **Needs attention**: 3 or more leave days in the cycle, or late marks at the company limit.
@@ -209,3 +215,110 @@ Salary figures are calculated in one bulk pass per request (one query per table)
 Run `migrations/2026-11-currency-and-employee-codes.sql` once. It switches stored currency to ₹, gives codes to any
 employee who doesn't have one, and renames duplicate codes (keeping the oldest, so `EMP-0003` becomes `EMP-0003-2`).
 Check the Employees page afterwards for any renamed codes.
+
+
+## Release: salary slips, Sunday/holiday cut, retention, anti-spoofing, peak traffic
+
+Run `migrations/2026-11-slips-holiday-deduction-retention.sql` once (it is idempotent). It adds the holiday-cut settings,
+the per-cycle holiday figures and the `salary_slip_requests` table. Existing companies see no change in pay until an admin
+switches the holiday rule on. Then deploy and schedule the purge job above.
+
+### Salary slips (45 → 90 day access)
+* An employee opens **Salary** and taps **Request slip** on any finalized or paid cycle. The admin sees it under
+  **Salary slip requests** at the top of the Salary page and taps **Approve** or **Reject** (with an optional reason).
+* After approval the employee downloads the payslip as a PDF. It stays downloadable for **90 days from approval**
+  (`SLIP_ACCESS_DAYS` in `src/lib/payroll.ts`). After that the API returns 410 and the employee cannot open it. Admins can always open it.
+* The slip shows the frozen, finalized figures, produced by the same helper as the salary page (`src/lib/salary-breakdown.ts`),
+  so the two always agree. PDFs are built in the browser with the standard PDF fonts, which show "Rs." instead of "₹".
+
+### Sunday / holiday pay cut (Rules → Deductions & absence)
+* Off by default. When on, a block of consecutive non-working days (weekly offs and company holidays together) is cut by one
+  day's pay if, among the working days directly before and after the block, at least N are unauthorized absences
+  (N = 1 or 2, chosen by the admin).
+* Unauthorized absence means a passed working day with no punch, no half-day record and no approved leave.
+* Any punch on a day in the block cancels the cut. A block is counted once, in the salary cycle where it starts.
+* The cut appears on the payslip as "Sunday / holiday pay cut" and is included in total deductions. Finalized months keep the
+  figure stored at finalization.
+* Data for the days either side of a cycle is loaded (`HOLIDAY_CONTEXT_DAYS = 7`) so a block at a cycle boundary is judged correctly.
+
+### Retention
+| Data | Kept for | After that |
+|---|---|---|
+| Punch photos | 45 days from work date | Image deleted; times, GPS and status kept |
+| Attendance records (no photo) | 90 days from work date | Row deleted |
+| Attendance for an unfinalized salary cycle | Until that cycle is finalized (checked within the last 13 cycles) | Never deleted early |
+| Finalized / paid salary | Forever | Not affected (stored in `salary_records`) |
+| Salary slip access | 90 days from approval | Employee download returns 410 |
+
+**Check before enabling the 90-day deletion:** many countries require payroll and attendance registers to be kept for
+several years (in India, for example, under the wage and labour laws). Deleting attendance rows after 90 days may conflict
+with those obligations. If you need the longer history, raise `RECORD_RETENTION_DAYS` in `src/lib/payroll.ts` or move
+attendance rows to an archive table instead of deleting them. The job never deletes data for an unfinalized salary cycle.
+
+### Anti-spoofing (punch in/out)
+* **Live camera only.** The photo comes from the in-app camera. There is no file picker. The server accepts only JPEG
+  photos produced by the camera's encoder path, and rejects anything else.
+* **Signed, short-lived challenge.** Every punch first fetches `/api/attendance/challenge`, an HMAC signed with the
+  signed-in session's token and valid for 3 minutes. A stored or replayed punch request fails. This does NOT prove a live
+  camera took the photo. It proves the request was made by the signed-in session just now.
+* **Fresh GPS.** The browser must return a fix that is at most 60 seconds old (the server refuses readings older than 90
+  seconds). Cached positions are not used (`maximumAge: 0`).
+* **Mock location.** A web page cannot reliably detect mock-location apps. The server refuses any punch where
+  `mockLocation: true` is sent, and records the attempt in the audit log (`punch.blocked`). Punches with an accuracy under
+  1 m are accepted but logged (`punch.flagged`) for review.
+* **Making mock-location detection real (Android):** build the Capacitor shell (see *Turning this into a mobile app* above)
+  and define `window.TimeTrackNative.isMockLocation()` in it. It should return `true` when the Android location object
+  reports `isFromMockProvider()`. The web app already sends that flag. Without a native shell, mock GPS can only be
+  reduced by these checks, not fully prevented.
+
+### Peak-hour performance (morning punch-in)
+* Authentication is one database query per request (it was three round trips).
+* A punch takes four database round trips in total (auth, geofences and assignments together, the existing record, the write).
+* **Idempotent punches:** a repeated punch-in or punch-out returns success with `duplicate: true` and the saved record,
+  so a retry after a timeout never double-punches or shows an error. The write is conditional (`punch_in_time IS NULL`).
+* The browser retries only temporary failures (no connection, timeout, 502/503/504) up to three times with jitter. It never
+  retries validation errors.
+* The database pool sets `statement_timeout` (20 s) and `query_timeout` (25 s), so a stuck query cannot hold a connection.
+* Recommended for Vercel/serverless: use the pooled connection string and keep `DB_POOL_MAX` small (see above).
+
+### Photo compression
+Photos are compressed toward about 65 KB. The camera tries the best setting first (480 px, quality 0.6) and steps down only
+when the photo is still too large, down to 360 px at quality 0.35. Faces stay clear at every step.
+
+### Rules page
+Rules are grouped into categories (attendance timing, overtime and weekly-off work, deductions and absence, leave and salary
+cycle, records and privacy). Each rule opens from a full-width tap target with **View more**. Phones get a scrollable category
+row; desktops get a side index. **Expand all** and **Collapse all** are available on both.
+
+## Release: live dashboard, late-percentage absence, slip branding, mid-cycle slips
+
+Run `migrations/2026-11-live-dashboard-slips-branding.sql` once (idempotent). Then run the tests (`npm test`).
+
+### Live dashboard (admin and manager home)
+* **Daily (live)** shows every employee's status for today, computed from the stored punches and the current time. An
+  employee who has not punched in is **Absent** once the cool-off has passed, and shows **Not punched yet** inside it.
+  A punch-in updates the status as soon as it is saved. The page refreshes every 30 seconds while it is open.
+* **7 days**, **30 days** count each day from punches and approved leave (weekly offs and holidays are not counted).
+* **Salary cycle** counts exactly as payroll does, so it matches the salary figures.
+* Refreshing is a single small request, so the morning punch-in spike does not multiply load.
+
+### Late-percentage auto-absent (Rules → Attendance timing)
+Off by default. When on, a punch-in after the set share of the shift (10–100 %, default 50 %) is recorded as **absent**
+instead of late or half day. The employee can still punch in and out. Payroll treats such a day as an absence, the same as
+a day with no punch. The cut-off time is shown on the Rules page.
+
+### Rules explanations
+Every rule and toggle has an **i** button. It explains what the rule does and gives a worked example.
+
+### Salary slips
+* **Company profile & logo** (Settings → Company profile): name, legal name, address, phone, email, website, GSTIN/PAN
+  and a logo. The logo is resized in the browser to about 240 px and stored separately from the company row, so ordinary
+  requests do not load it. These details appear at the top of every slip.
+* **Mid-cycle slips** (Rules → Salary slips during a running cycle): off by default. When on, employees can request a slip
+  for the cycle that is still running. On approval the figures are frozen as a **provisional** slip (marked Provisional
+  in the PDF, with the as-of date). Once the cycle is finalized, the final figures are shown instead.
+
+### Photos and reports
+* Punch photos are compressed toward about 30 KB (was about 65 KB) before upload. Faces stay clear at the smallest step.
+* Reports offer **Last 30 days** and **Last 90 days (text records)**, so the 90-day text data can be exported as
+  Excel, CSV or PDF. Photos are not included.

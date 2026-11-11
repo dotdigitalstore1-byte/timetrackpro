@@ -44,8 +44,15 @@ export interface AuthContext {
   company: Company | null;
   settings: CompanySettings | null;
   employee: Employee | null;
+  /** The raw session token. Used to sign short-lived punch challenges (see capture-token.ts). Never sent to clients. */
+  sessionToken: string;
 }
 
+/**
+ * Resolves the signed-in user, company, settings and employee profile in ONE query.
+ * Previously this took three sequential round trips per request, which multiplied latency and database
+ * connection use during the morning punch-in spike.
+ */
 export async function getAuth(): Promise<AuthContext | null> {
   const cookieStore = await cookies();
   const token = cookieStore.get(SESSION_COOKIE)?.value;
@@ -53,39 +60,37 @@ export async function getAuth(): Promise<AuthContext | null> {
 
   const rows = await db
     .select({
-      session: sessions,
       user: users,
+      company: companies,
+      settings: companySettings,
+      employee: employees,
     })
     .from(sessions)
     .innerJoin(users, eq(sessions.userId, users.id))
+    .leftJoin(companies, eq(companies.id, users.companyId))
+    .leftJoin(companySettings, eq(companySettings.companyId, users.companyId))
+    // Only employee accounts have an employee profile (punching, leave, salary). Admins and managers supervise.
+    .leftJoin(employees, and(eq(employees.userId, users.id), eq(users.role, "employee")))
     .where(and(eq(sessions.token, token), gt(sessions.expiresAt, new Date())))
     .limit(1);
 
-  if (rows.length === 0) return null;
-
-  const { user } = rows[0];
+  const row = rows[0];
+  if (!row) return null;
+  const { user, company, settings, employee } = row;
   if (!user.isActive) return null;
 
-  if (!user.companyId) return { user, company: null, settings: null, employee: null };
+  if (!user.companyId) return { user, company: null, settings: null, employee: null, sessionToken: token };
 
-  // These three lookups are independent, so run them together (one round-trip instead of three).
-  const [comp, sets, emp] = await Promise.all([
-    db.select().from(companies).where(eq(companies.id, user.companyId)).limit(1),
-    db.select().from(companySettings).where(eq(companySettings.companyId, user.companyId)).limit(1),
-    // Only employee accounts have an employee profile (punching, leave, salary). Admins and managers supervise.
-    user.role !== "employee"
-      ? Promise.resolve([] as Employee[])
-      : db.select().from(employees).where(eq(employees.userId, user.id)).limit(1),
-  ]);
-
-  const company: Company | null = comp[0] ?? null;
   if (company && company.status !== "active" && user.role !== "super_admin") {
     return null; // suspended / deactivated companies cannot log in
   }
-  const settings: CompanySettings | null = sets[0] ?? null;
-  const employee: Employee | null = emp[0] ?? null;
-
-  return { user, company, settings, employee };
+  return {
+    user,
+    company: company ?? null,
+    settings: settings ?? null,
+    employee: user.role === "employee" ? employee ?? null : null,
+    sessionToken: token,
+  };
 }
 
 export async function setSessionCookie(token: string): Promise<void> {

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { api, downloadBlob, hasPower, useMe } from "@/lib/client";
 import { Badge, Button, Card, Input, PageHeader, Select, Spinner } from "@/components/ui";
 import EmployeePicker from "@/components/EmployeePicker";
+import { AdminSlipRequests, EmployeeSlipsCard } from "@/components/SalarySlips";
 import { formatDate, formatDayKey, formatNumber, monthLabel, CURRENCY } from "@/lib/utils";
 
 interface SalaryData {
@@ -12,7 +13,8 @@ interface SalaryData {
   year: number;
   period: { start: string; end: string };
   cycles: { key: string; start: string; end: string }[];
-  payDate: string;
+  salaryDate: string;
+  disbursementDate: string;
   status: "preview" | "draft" | "finalized" | "paid";
   frozen: boolean;
   breakdown: {
@@ -40,15 +42,18 @@ interface SalaryData {
     additionsTotal: number;
     halfDayDeduction: number;
     leaveDeduction: number;
+    holidayDeductionDays: number;
+    holidayDeduction: number;
     otherDeductions: { label: string; amount: number }[];
     totalDeductions: number;
     salaryHoldDays: number;
     salaryHoldAmount: number;
     netBeforeHold: number;
     netPayable: number;
+    ledger: LedgerLine[] | null;
   };
-  holds: { id: string | null; days: number; amount: number; reason: string; occurrenceDate: string; status: string }[];
-  history: { id: string; month: number; year: number; periodStart: string | null; periodEnd: string | null; basicSalary: string; attendanceSalary: string; totalDeductions: string; salaryHoldAmount: string; netPayable: string; status: string }[];
+  holds: { id: string | null; days: number; unapprovedDays: number; amount: number; reason: string; occurrenceDate: string; status: string }[];
+  history: { id: string; month: number; year: number; periodStart: string | null; periodEnd: string | null; basicSalary: string; attendanceSalary: string; totalDeductions: string; salaryHoldAmount: string; netPayable: string; status: string; disbursementDate: string | null }[];
 }
 
 const STATUS_TONE: Record<string, "slate" | "amber" | "indigo" | "green"> = {
@@ -144,7 +149,13 @@ export default function SalaryPage() {
 
   return (
     <div>
-      <PageHeader title="Salary" subtitle="Transparent attendance-based payroll — deductions and holds are tracked separately" />
+      <PageHeader title="Salary" subtitle="Transparent attendance-based payroll — deductions, and salary delays for unapproved leave, are shown separately" />
+
+      {isAdmin && (
+        <div className="mb-4">
+          <AdminSlipRequests />
+        </div>
+      )}
 
       {isAdmin && (
         <AdminSalaryOverview
@@ -225,9 +236,10 @@ export default function SalaryPage() {
               <Badge tone={STATUS_TONE[data.status] ?? "slate"}>{data.status === "preview" ? "live preview" : data.status}</Badge>
             </div>
             <p className="mt-1 text-3xl font-bold">{currency}{formatNumber(b.netPayable)}</p>
-            <p className="text-xs text-indigo-200">Payable now{b.salaryHoldAmount > 0 ? ` · ${currency}${formatNumber(b.salaryHoldAmount)} on hold` : ""}</p>
+            <p className="text-xs text-indigo-200">Net payable for this cycle{b.salaryHoldDays > 0 ? ` · paid ${b.salaryHoldDays} day(s) after the salary date` : ""}</p>
             <p className="mt-2 text-xs text-indigo-100">
-              Cycle {formatDayKey(data.period.start)} – {formatDayKey(data.period.end)} · Pay date {formatDayKey(data.payDate)}
+              Cycle {formatDayKey(data.period.start)} – {formatDayKey(data.period.end)} · Salary date {formatDayKey(data.salaryDate)}
+              {data.disbursementDate !== data.salaryDate ? <> · Disburses {formatDayKey(data.disbursementDate)}</> : null}
             </p>
           </div>
 
@@ -252,7 +264,7 @@ export default function SalaryPage() {
               <h3 className="mb-1 font-bold text-slate-900">Earnings</h3>
               <p className="mb-3 text-xs leading-relaxed text-slate-500">
                 Every salary is worked out on a fixed 30-day month, so the daily rate is basic salary ÷ 30 in every month.
-                Sundays and holidays are paid days. Each unpaid day (an unapproved absence, or leave not covered by comp-off) costs one daily rate.
+                Sundays and holidays are paid days unless the Sunday/holiday rule cuts them (see Deductions). Each unpaid day (an unapproved absence, or leave not covered by comp-off) costs one daily rate.
               </p>
               <div className="space-y-2 text-sm">
                 <Row label="Monthly basic salary" value={`${currency}${formatNumber(b.basicSalary)}`} />
@@ -304,6 +316,9 @@ export default function SalaryPage() {
                   <Row label={`Early leave (${b.earlyLeaveDays} day(s))`} value={`-${currency}${formatNumber(b.earlyLeaveDeduction)}`} negative />
                 )}
                 <Row label={`Half-day (${b.halfDays} day(s))`} value={`-${currency}${formatNumber(b.halfDayDeduction)}`} negative />
+                {b.holidayDeduction > 0 && (
+                  <Row label={`Sunday / holiday pay cut (${b.holidayDeductionDays} day(s), unauthorized leave around it)`} value={`-${currency}${formatNumber(b.holidayDeduction)}`} negative />
+                )}
                 <Row label={`Approved leave (${formatNumber(b.unpaidLeaveDays, 0)} unpaid of ${formatNumber(b.leaveDays, 0)} day(s))`} value={`-${currency}${formatNumber(b.leaveDeduction)}`} negative />
                 {b.otherDeductions.map((d, i) => (
                   <div key={i} className="flex items-center justify-between">
@@ -329,34 +344,50 @@ export default function SalaryPage() {
                 </div>
               )}
 
-              <div className="mt-4 space-y-2 rounded-xl bg-slate-50 p-3 text-sm">
-                <Row label="Net after deductions" value={`${currency}${formatNumber(b.netBeforeHold)}`} />
-                <Row label={`Unapproved-leave hold (${b.salaryHoldDays} day(s)) — temporary`} value={`-${currency}${formatNumber(b.salaryHoldAmount)}`} negative />
-              </div>
-              <div className="mt-3 rounded-xl bg-emerald-50 p-3">
-                <Row label="Payable now" value={`${currency}${formatNumber(b.netPayable)}`} bold />
+              {b.salaryHoldAmount > 0 && (
+                <div className="mt-4 space-y-2 rounded-xl bg-slate-50 p-3 text-sm">
+                  <Row label="Net after deductions" value={`${currency}${formatNumber(b.netBeforeHold)}`} />
+                  <Row label="Held under the earlier rule (temporary)" value={`-${currency}${formatNumber(b.salaryHoldAmount)}`} negative />
+                </div>
+              )}
+              <div className="mt-4 rounded-xl bg-emerald-50 p-3">
+                <Row label="Net payable" value={`${currency}${formatNumber(b.netPayable)}`} bold />
+                <Row label="Salary date" value={formatDayKey(data.salaryDate)} />
+                <Row label="Disburses on" value={formatDayKey(data.disbursementDate)} bold />
+                {b.salaryHoldDays > 0 && (
+                  <p className="mt-2 text-xs text-amber-700">
+                    Delayed {b.salaryHoldDays} day(s) for unapproved leave. The full amount is paid, later than the salary date.
+                  </p>
+                )}
               </div>
             </Card>
 
             <div className="space-y-4">
               <Card>
-                <h3 className="mb-1 font-bold text-slate-900">Salary Holds (Unapproved Leave)</h3>
-                <p className="mb-3 text-xs text-slate-500">Holds are temporary and are not deductions. Each unapproved absence adds {me?.settings?.unapprovedHoldDays ?? 2} days of salary to the hold; an admin can release it.</p>
+                <h3 className="mb-1 font-bold text-slate-900">Salary delay (unapproved leave)</h3>
+                <p className="mb-3 text-xs leading-relaxed text-slate-500">
+                  {me?.settings?.salaryHoldEnabled === false
+                    ? "The salary hold is switched off, so unapproved days do not delay the salary."
+                    : `Each unapproved day delays the disbursement date by ${me?.settings?.unapprovedHoldDays ?? 2} days, counted from the salary date (${formatDayKey(data.salaryDate)}). The salary is not reduced; it is paid later.`}
+                </p>
                 {data.holds.length === 0 ? (
-                  <p className="text-sm text-slate-400">No salary holds this month.</p>
+                  <p className="text-sm text-slate-400">No unapproved days this cycle, so no delay.</p>
                 ) : (
                   <div className="space-y-2">
                     {data.holds.map((h, i) => (
                       <div key={h.id ?? i} className="flex items-center justify-between gap-2 rounded-xl bg-amber-50 px-3 py-2 text-sm">
                         <div>
-                          <p className="font-semibold text-amber-800">{h.reason} · {formatDate(h.occurrenceDate)}</p>
-                          <p className="text-xs text-amber-600">{h.days} day(s) hold</p>
+                          <p className="font-semibold text-amber-800">Unapproved from {formatDate(h.occurrenceDate)}</p>
+                          <p className="text-xs text-amber-600">
+                            {h.amount > 0
+                              ? `Money held under the earlier rule: ${currency}${formatNumber(h.amount)}`
+                              : `${h.unapprovedDays} unapproved day(s) → ${h.days} day(s) delay${h.status === "released" ? " (released)" : ""}`}
+                          </p>
                         </div>
                         <div className="text-right">
-                          <p className="font-bold text-amber-800">{currency}{formatNumber(h.amount)}</p>
                           <Badge tone={h.status === "released" ? "green" : "amber"}>{h.status}</Badge>
                           {isAdmin && h.id && h.status === "active" && data.status !== "paid" && (
-                            <button onClick={() => act("release_hold", { holdId: h.id }, "Release this hold and return the amount to the employee?")} className="ml-2 text-xs font-semibold text-indigo-600 hover:underline">
+                            <button onClick={() => act("release_hold", { holdId: h.id }, "Release this delay? These days will not delay the salary.")} className="ml-2 text-xs font-semibold text-indigo-600 hover:underline">
                               Release
                             </button>
                           )}
@@ -365,8 +396,13 @@ export default function SalaryPage() {
                     ))}
                   </div>
                 )}
+                <div className="mt-3 space-y-2 rounded-xl bg-slate-50 p-3 text-sm">
+                  <Row label="Salary date" value={formatDayKey(data.salaryDate)} />
+                  <Row label={`Delay for unapproved leave (${b.salaryHoldDays} day(s))`} value={`+${b.salaryHoldDays} day(s)`} />
+                  <Row label="Disbursement date" value={formatDayKey(data.disbursementDate)} bold />
+                </div>
                 {isAdmin && data.holds.some((h) => !h.id) && (
-                  <p className="mt-2 text-[11px] text-slate-400">Save the draft to create releasable hold records.</p>
+                  <p className="mt-2 text-[11px] text-slate-400">Save the draft to create releasable delay records.</p>
                 )}
               </Card>
 
@@ -377,7 +413,7 @@ export default function SalaryPage() {
                     <div key={h.id} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-sm">
                       <div>
                         <p className="font-semibold text-slate-700">{h.periodStart && h.periodEnd ? `${formatDayKey(h.periodStart)} – ${formatDayKey(h.periodEnd)}` : monthLabel(h.year, h.month)} <Badge tone={STATUS_TONE[h.status] ?? "slate"}>{h.status}</Badge></p>
-                        <p className="text-xs text-slate-400">Earned {currency}{formatNumber(h.attendanceSalary)} · Deductions {currency}{formatNumber(h.totalDeductions)} · Held {currency}{formatNumber(h.salaryHoldAmount)}</p>
+                        <p className="text-xs text-slate-400">Earned {currency}{formatNumber(h.attendanceSalary)} · Deductions {currency}{formatNumber(h.totalDeductions)} {h.disbursementDate ? `· Disburses ${formatDayKey(h.disbursementDate)}` : ""}</p>
                       </div>
                       <p className="font-bold text-emerald-600">{currency}{formatNumber(h.netPayable)}</p>
                     </div>
@@ -387,9 +423,87 @@ export default function SalaryPage() {
               </Card>
             </div>
           </div>
+          <div className="mt-4">
+            <DeductionLog
+              ledger={b.ledger}
+              currency={currency}
+              absentDeduction={Math.max(0, b.basicSalary - b.attendanceSalary)}
+              totalDeductions={b.totalDeductions}
+            />
+          </div>
+          {!isAdmin && (
+            <div className="mt-4">
+              <EmployeeSlipsCard history={data.history} />
+            </div>
+          )}
         </>
       )}
     </div>
+  );
+}
+
+interface LedgerLine {
+  date: string | null;
+  kind: string;
+  reason: string;
+  amount: number;
+}
+
+/** The day-wise deduction log: every amount taken off, on the day it applies to, with the reason. */
+function DeductionLog({ ledger, currency, absentDeduction, totalDeductions }: { ledger: LedgerLine[] | null; currency: string; absentDeduction: number; totalDeductions: number }) {
+  const money = (n: number) => `${currency}${formatNumber(n)}`;
+  if (ledger === null) {
+    return (
+      <Card>
+        <h3 className="mb-1 font-bold text-slate-900">Day-wise deduction log</h3>
+        <p className="text-sm text-slate-400">Not recorded for this salary. The day-by-day log is kept for salaries finalized after it was introduced.</p>
+      </Card>
+    );
+  }
+  const taken = Math.round(ledger.reduce((t, l) => t + l.amount, 0) * 100) / 100;
+  const expected = Math.round((absentDeduction + totalDeductions) * 100) / 100;
+  return (
+    <Card>
+      <h3 className="mb-1 font-bold text-slate-900">Day-wise deduction log</h3>
+      <p className="mb-3 text-xs leading-relaxed text-slate-500">
+        Every amount taken off this salary, on the day it applies to, with the reason. Unpaid absences are listed here too, even though Earnings shows them as a reduction.
+      </p>
+      {ledger.length === 0 ? (
+        <p className="text-sm text-slate-400">Nothing was deducted this cycle.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[520px] text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                <th className="py-2 pr-3">Date</th>
+                <th className="py-2 pr-3">Reason</th>
+                <th className="py-2 text-right">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ledger.map((l, i) => (
+                <tr key={i} className="border-b border-slate-100 align-top">
+                  <td className="whitespace-nowrap py-2 pr-3 font-medium text-slate-700">{l.date ? formatDayKey(l.date) : "No date"}</td>
+                  <td className="py-2 pr-3 text-slate-600">{l.reason}</td>
+                  <td className={`whitespace-nowrap py-2 text-right font-semibold ${l.amount > 0 ? "text-rose-600" : "text-slate-400"}`}>
+                    {l.amount > 0 ? `−${money(l.amount)}` : "not deducted"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="font-bold text-slate-900">
+                <td className="py-2 pr-3" colSpan={2}>Total taken off this cycle</td>
+                <td className="py-2 text-right text-rose-600">−{money(taken)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+      {ledger.length > 0 && Math.abs(taken - expected) < 0.5 && (
+        <p className="mt-2 text-[11px] text-slate-400">Matches the deductions above plus unpaid absences. Lines are rounded to paise.</p>
+      )}
+    </Card>
   );
 }
 
@@ -727,7 +841,7 @@ function AdminSalaryOverview({
                   <p className="mt-1.5 text-2xl font-bold tabular-nums sm:mt-2 sm:text-3xl">{money(t.net)}</p>
                 </div>
                 <p className="shrink-0 text-right text-[11px] leading-snug text-indigo-100 sm:text-xs">
-                  {t.holds > 0 ? <>{money(t.holds)}<br />on hold</> : "to disburse"}
+                  {t.holds > 0 ? <>{money(t.holds)}<br />held (earlier rule)</> : "paid in full on the disbursement date"}
                 </p>
               </div>
             </div>
@@ -739,7 +853,7 @@ function AdminSalaryOverview({
             <span>Gross {money(t.gross)}</span>
             <span>− deductions {money(t.deductions)}</span>
             <span>+ additions, overtime & extra pay {money(t.credits)}</span>
-            <span>− on hold {money(t.holds)}</span>
+            {t.holds > 0 && <span>− held under the earlier rule {money(t.holds)}</span>}
             <span>= <b className="text-slate-900">{money(t.net)}</b></span>
           </div>
 

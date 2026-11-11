@@ -112,8 +112,6 @@ test("a missed punch-out costs the half-day deduction, not a full day", () => {
     lateRule: { type: "fixed", value: 0 },
     halfDayRule: { type: "percentage", value: 50 },
     leaveRule: { type: "percentage", value: 100 },
-    holdDaysPerOccurrence: 2,
-    releasedHoldCount: 0,
     otherDeductions: [],
   });
   assert.equal(summary.halfDays, 1);
@@ -139,8 +137,6 @@ test("two half days, one on a Sunday and one on a weekday, both deduct (2 x 250 
     lateRule: { type: "fixed", value: 0 },
     halfDayRule: { type: "percentage", value: 50 },
     leaveRule: { type: "percentage", value: 100 },
-    holdDaysPerOccurrence: 2,
-    releasedHoldCount: 0,
     otherDeductions: [],
   });
   assert.equal(r.halfDayDeduction, 500);

@@ -3,11 +3,17 @@
 
 export type AttendanceStatus = "present" | "late" | "half_day";
 
+/** A punch can also be recorded as "absent" when it comes after the late-percentage cut-off (see absentCutoffMinutes). */
+export type PunchStatus = AttendanceStatus | "absent";
+
 export interface PolicyInput {
   shiftStart: string; // "HH:MM" in company local time
+  shiftEnd?: string | null; // "HH:MM"; needed for the late-percentage rule
   graceMinutes: number;
   lateThresholdMinutes: number;
   timezone: string; // IANA zone, e.g. "Asia/Kolkata"
+  /** Late-percentage rule: punching in after this % of the shift has passed marks the day absent. null/0 = off. */
+  absentAfterPercent?: number | null;
 }
 
 // ---------------------------------------------------------------- time zones
@@ -113,9 +119,23 @@ export function overtimeMinutesOf(punchOut: Date, workDate: Date, shiftEnd: stri
 
 // ------------------------------------------------------------------ status
 
-export function computeStatus(punchIn: Date, p: PolicyInput): AttendanceStatus {
+/**
+ * The clock time (minutes since midnight) after which a punch-in marks the day absent under the
+ * late-percentage rule, or null when the rule is off. Example: 09:00–18:00 at 50% gives 13:30.
+ */
+export function absentCutoffMinutes(shiftStart: string, shiftEnd: string | null | undefined, percent: number | null | undefined): number | null {
+  if (!percent || percent <= 0 || !shiftEnd) return null;
+  const start = parseHHMM(shiftStart);
+  const length = parseHHMM(shiftEnd) - start;
+  if (length <= 0) return null;
+  return start + (length * Math.min(100, percent)) / 100;
+}
+
+export function computeStatus(punchIn: Date, p: PolicyInput): PunchStatus {
   const minutes = localParts(punchIn, p.timezone).minutes;
   const start = parseHHMM(p.shiftStart);
+  const cutoff = absentCutoffMinutes(p.shiftStart, p.shiftEnd, p.absentAfterPercent);
+  if (cutoff !== null && minutes > cutoff) return "absent";
   if (minutes <= start + (p.graceMinutes || 0)) return "present";
   if (minutes <= start + (p.lateThresholdMinutes || 0)) return "late";
   return "half_day";
@@ -216,6 +236,44 @@ export interface DayRecord {
   hasPunchOut?: boolean; // false = punched in but never punched out (mandatory punch-out rule)
   earlyLeaveMinutes?: number; // minutes left before shift end (recorded at punch-out)
   overtimeMinutes?: number; // raw minutes worked after shift end (recorded at punch-out)
+  punchInMinutes?: number | null; // company-clock minutes since midnight of the punch-in (for the deduction log)
+  punchOutMinutes?: number | null;
+}
+
+/** Why a day counted as a half day. */
+export type HalfDayCause = "cutoff" | "left_early" | "no_punch_out" | "manual";
+
+/**
+ * One day that changes pay, as classified by summarizeMonth. The totals and the day-wise deduction log are both
+ * built from these, so the two can never disagree.
+ */
+export interface DayEvent {
+  date: Date; // UTC midnight of the work date
+  offDay: boolean; // weekly off or company holiday
+  lateDay: boolean;
+  halfDay: boolean;
+  halfDayCause?: HalfDayCause;
+  earlyLeave: boolean;
+  absent: boolean; // unapproved absence: no punch and no approved leave
+  autoAbsent: boolean; // absent because the punch-in came after the late-percentage cut-off
+  leave: boolean; // approved leave on a workday
+  punchInMinutes: number | null;
+  punchOutMinutes: number | null;
+  earlyLeaveMinutes: number;
+}
+
+export interface MonthSummary {
+  presentDays: number; // full-day attendances (incl. late)
+  lateDays: number;
+  halfDays: number;
+  leaveDays: number; // approved leave on workdays
+  absentDays: number; // unapproved days: workdays with no punch and no approved leave (one per day)
+  unapprovedOccurrences: Date[]; // first day of each run of consecutive unapproved days
+  unapprovedRunLengths: number[]; // number of unapproved days in each run, parallel to unapprovedOccurrences
+  earlyLeaveDays?: number; // full days where the employee left early beyond the grace
+  overtimeMinutes?: number; // payable overtime minutes (after min threshold and daily cap)
+  weekOffWorkedDays?: number; // days worked on a weekly off (Sunday, etc.): each earns one comp-off
+  events: DayEvent[]; // every day that changes pay, in date order
 }
 
 /** Company rules that change how recorded days are counted. All optional: omitted = legacy behaviour. */
@@ -225,22 +283,10 @@ export interface SummaryRules {
   overtime?: { minMinutes: number; maxMinutesPerDay: number } | null;
 }
 
-export interface MonthSummary {
-  presentDays: number; // full-day attendances (incl. late)
-  lateDays: number;
-  halfDays: number;
-  leaveDays: number; // approved leave on workdays
-  absentDays: number; // workdays with no punch and no approved leave
-  unapprovedOccurrences: Date[]; // first day of each consecutive absent block
-  earlyLeaveDays?: number; // full days where the employee left early beyond the grace
-  overtimeMinutes?: number; // payable overtime minutes (after min threshold and daily cap)
-  weekOffWorkedDays?: number; // days worked on a weekly off (Sunday, etc.): each earns one comp-off
-}
-
 /**
- * Walks every workday of the month up to (but not including) `todayLocal`.
- * A workday with no punch-in and no approved leave is "unapproved leave".
- * Consecutive unapproved workdays form ONE occurrence (one hold).
+ * Walks every workday of the period up to (but not including) `todayLocal`.
+ * A workday with no punch-in and no approved leave is an unapproved day. Consecutive unapproved workdays form ONE
+ * run (one salary-hold occurrence); every day in the run counts once in absentDays.
  */
 export function summarizeMonth(args: {
   year: number;
@@ -261,31 +307,57 @@ export function summarizeMonth(args: {
     leaveDays: 0,
     absentDays: 0,
     unapprovedOccurrences: [],
+    unapprovedRunLengths: [],
     earlyLeaveDays: 0,
     overtimeMinutes: 0,
     weekOffWorkedDays: 0,
+    events: [],
   };
   let inBlock = false;
   const rules = args.rules;
   const period = args.period ?? cyclePeriod(args.year, args.month, 1);
+  const holidaySet = args.holidays ?? new Set<string>();
+  const isOff = (d: Date) => args.weeklyOff.has(d.getUTCDay()) || holidaySet.has(dateKey(d));
+  const note = (day: Date, rec: DayRecord | undefined, e: Partial<DayEvent>) => {
+    out.events.push({
+      date: day,
+      offDay: isOff(day),
+      lateDay: false,
+      halfDay: false,
+      earlyLeave: false,
+      absent: false,
+      autoAbsent: false,
+      leave: false,
+      punchInMinutes: rec?.punchInMinutes ?? null,
+      punchOutMinutes: rec?.punchOutMinutes ?? null,
+      earlyLeaveMinutes: rec?.earlyLeaveMinutes ?? 0,
+      ...e,
+    });
+  };
 
   for (const day of periodWorkdays(period, args.weeklyOff, args.holidays)) {
     if (args.joinDate && day.getTime() < args.joinDate.getTime()) continue;
     const rec = args.records.get(dateKey(day));
-    if (rec?.hasPunchIn) {
+    // A punch recorded as "absent" (late-percentage rule) is an absence, exactly like no punch at all.
+    if (rec?.hasPunchIn && rec.status !== "absent") {
       inBlock = false;
       // Mandatory punch-out: punched in but no punch-out by the end of that day => half day.
       if (rec.hasPunchOut === false && day.getTime() < args.todayLocal.getTime()) {
         out.halfDays += 1;
+        note(day, rec, { halfDay: true, halfDayCause: "no_punch_out" });
         continue;
       }
       const early = rec.earlyLeaveMinutes ?? 0;
       const leftTooEarly = !!rules && rules.earlyLeaveHalfDayMinutes > 0 && early > rules.earlyLeaveHalfDayMinutes;
-      if (rec.status === "half_day" || leftTooEarly) out.halfDays += 1;
-      else {
+      if (rec.status === "half_day" || leftTooEarly) {
+        out.halfDays += 1;
+        note(day, rec, { halfDay: true, halfDayCause: rec.status === "half_day" ? "cutoff" : "left_early" });
+      } else {
         out.presentDays += 1;
         if (rec.status === "late") out.lateDays += 1;
-        if (rules && early > rules.earlyLeaveGraceMinutes) out.earlyLeaveDays = (out.earlyLeaveDays ?? 0) + 1;
+        const isEarly = !!rules && early > rules.earlyLeaveGraceMinutes;
+        if (isEarly) out.earlyLeaveDays = (out.earlyLeaveDays ?? 0) + 1;
+        if (rec.status === "late" || isEarly) note(day, rec, { lateDay: rec.status === "late", earlyLeave: isEarly });
       }
       const ot = rec.overtimeMinutes ?? 0;
       if (rules?.overtime && ot > 0 && ot >= rules.overtime.minMinutes) {
@@ -297,6 +369,7 @@ export function summarizeMonth(args: {
     if (rec?.status === "half_day") {
       inBlock = false;
       out.halfDays += 1;
+      note(day, rec, { halfDay: true, halfDayCause: "manual" });
       continue;
     }
     const onLeave = args.approvedLeaves.some(
@@ -305,28 +378,37 @@ export function summarizeMonth(args: {
     if (onLeave) {
       inBlock = false;
       out.leaveDays += 1;
+      note(day, rec, { leave: true });
       continue;
     }
     if (day.getTime() >= args.todayLocal.getTime()) continue; // future / today: not absent yet
     out.absentDays += 1;
+    note(day, rec, { absent: true, autoAbsent: !!rec?.hasPunchIn });
     if (!inBlock) {
       out.unapprovedOccurrences.push(day);
+      out.unapprovedRunLengths.push(1);
       inBlock = true;
+    } else {
+      out.unapprovedRunLengths[out.unapprovedRunLengths.length - 1] += 1;
     }
   }
 
   // Half days recorded on a weekly off or a holiday are real half days: they deduct and show in the counts.
   // (Full-day work on those days is not counted here; it earns comp-off below.)
-  const holidaySet = args.holidays ?? new Set<string>();
   for (let t = period.start.getTime(); t <= period.end.getTime(); t += 86400000) {
     const d = new Date(t);
-    const isOff = args.weeklyOff.has(d.getUTCDay()) || holidaySet.has(dateKey(d));
-    if (!isOff) continue;
+    if (!isOff(d)) continue;
     if (args.joinDate && d.getTime() < args.joinDate.getTime()) continue;
     const rec = args.records.get(dateKey(d));
     if (!rec) continue;
     const missingOut = rec.hasPunchIn && rec.hasPunchOut === false && d.getTime() < args.todayLocal.getTime();
-    if (rec.status === "half_day" || missingOut) out.halfDays += 1;
+    if (rec.status === "half_day" || missingOut) {
+      out.halfDays += 1;
+      note(d, rec, {
+        halfDay: true,
+        halfDayCause: missingOut ? "no_punch_out" : rec.hasPunchIn ? "cutoff" : "manual",
+      });
+    }
   }
 
   // Work done on a weekly off (Sunday by default) earns one comp-off credit per day.
@@ -390,6 +472,20 @@ export function photoCutoff(todayLocal: Date): Date {
   return addDays(todayLocal, -PHOTO_RETENTION_DAYS);
 }
 
+/**
+ * Attendance rows (times, status, GPS, no photo) are kept this many days by work date, then deleted.
+ * Payroll for finalized cycles is stored in salary_records, so it is not affected.
+ */
+export const RECORD_RETENTION_DAYS = 90;
+
+/** Attendance rows for work dates before this are deleted. */
+export function recordCutoff(todayLocal: Date): Date {
+  return addDays(todayLocal, -RECORD_RETENTION_DAYS);
+}
+
+/** An employee can download an approved salary slip for this many days after the admin approves the request. */
+export const SLIP_ACCESS_DAYS = 90;
+
 // ------------------------------------------------------------------- salary
 
 export interface DeductionRule {
@@ -400,6 +496,9 @@ export interface DeductionRule {
 /** Every month is treated as this many days, so the daily rate never depends on the calendar. */
 export const SALARY_BASE_DAYS = 30;
 
+/** The salary date when the company has not chosen one: the 5th of the month after the cycle ends. */
+export const DEFAULT_SALARY_DISBURSEMENT_DAY = 5;
+
 export interface SalaryInput {
   basicSalary: number;
   workDaysPerMonth: number; // divisor for the daily rate; the standard is SALARY_BASE_DAYS (30)
@@ -407,8 +506,7 @@ export interface SalaryInput {
   lateRule: DeductionRule; // per late day
   halfDayRule: DeductionRule; // per half day
   leaveRule: DeductionRule; // per UNPAID approved leave day (leave covered by comp-off is not deducted)
-  holdDaysPerOccurrence: number;
-  releasedHoldCount: number; // occurrences whose hold has been released
+  holdDelayDays?: number; // ACTIVE salary-hold delay in days (0 when the hold rule is off or every run is released)
   otherDeductions: { label: string; amount: number }[];
   // --- optional company rules (omitted = no effect) ---
   earlyLeaveRule?: DeductionRule; // per early-leave day
@@ -417,6 +515,7 @@ export interface SalaryInput {
   shiftHours?: number; // employee's shift length, for the hourly rate
   additions?: { label: string; amount: number }[]; // bonuses / allowances for this cycle
   extraPay?: { enabled: boolean; rate: number }; // pay for comp-off nobody used by the end of the cycle
+  holidayDeductionDays?: number; // Sunday / holiday days cut for unauthorized leave around them (see holidayDeductionBlocks)
 }
 
 export interface SalaryResult {
@@ -430,11 +529,11 @@ export interface SalaryResult {
   otherTotal: number;
   overtimePay: number;
   additionsTotal: number;
-  totalDeductions: number; // permanent deductions only (holds are separate)
-  holdDays: number; // ACTIVE hold days
-  holdAmount: number; // ACTIVE hold amount (temporary, releasable)
-  netBeforeHold: number;
-  netPayable: number; // payable now = net before hold - active holds
+  totalDeductions: number; // permanent deductions only (the salary hold is not a deduction)
+  holdDays: number; // ACTIVE salary-hold delay: the disbursement date moves this many days after the salary date
+  holdAmount: number; // always 0. Money holds were replaced by the date delay; kept so finalized history reads correctly
+  netBeforeHold: number; // same as netPayable (kept for existing readers)
+  netPayable: number; // paid in full, on the disbursement date
   // --- weekly-off work and comp-off
   weekOffWorkedDays: number; // days worked on a weekly off; each earns one comp-off
   compOffUsed: number; // approved leave days covered by comp-off in this cycle (paid, not deducted)
@@ -442,6 +541,8 @@ export interface SalaryResult {
   unpaidLeaveDays: number; // approved leave days still deducted
   extraPayDays: number; // unused comp-off that is paid as extra pay
   extraPay: number;
+  holidayDeductionDays: number; // Sunday / holiday days cut in this cycle
+  holidayDeduction: number; // amount of those days (daily rate each)
 }
 
 const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
@@ -477,16 +578,16 @@ export function computeSalary(i: SalaryInput): SalaryResult {
 
   const halfDayDeduction = s.halfDays * perUnit(i.halfDayRule, dailyRate);
   const leaveDeduction = unpaidLeaveDays * perUnit(i.leaveRule, dailyRate);
+  // Sunday / holiday pay is cut one daily rate per triggered block (0 unless the company rule is on).
+  const cutDays = Math.max(0, i.holidayDeductionDays ?? 0);
+  const holidayDeduction = cutDays * dailyRate;
   const otherTotal = i.otherDeductions.reduce((t, d) => t + Number(d.amount || 0), 0);
   const totalDeductions =
-    lateDeduction + lateMarksDeduction + earlyLeaveDeduction + halfDayDeduction + leaveDeduction + otherTotal;
+    lateDeduction + lateMarksDeduction + earlyLeaveDeduction + halfDayDeduction + leaveDeduction + holidayDeduction + otherTotal;
 
-  const activeOccurrences = Math.max(0, s.unapprovedOccurrences.length - i.releasedHoldCount);
-  const holdDays = activeOccurrences * i.holdDaysPerOccurrence;
-  const holdAmount = holdDays * dailyRate;
-
+  // The salary hold no longer withholds money: it delays the disbursement date (see holdDelayDaysOf).
+  const holdDays = Math.max(0, Math.round(i.holdDelayDays ?? 0));
   const netBeforeHold = Math.max(0, attendanceSalary + overtimePay + additionsTotal + extraPay - totalDeductions);
-  const netPayable = Math.max(0, netBeforeHold - holdAmount);
 
   return {
     dailyRate: r2(dailyRate),
@@ -501,16 +602,256 @@ export function computeSalary(i: SalaryInput): SalaryResult {
     additionsTotal: r2(additionsTotal),
     totalDeductions: r2(totalDeductions),
     holdDays,
-    holdAmount: r2(holdAmount),
+    holdAmount: 0,
     netBeforeHold: r2(netBeforeHold),
-    netPayable: r2(netPayable),
+    netPayable: r2(netBeforeHold),
     weekOffWorkedDays,
     compOffUsed,
     compOffUnused,
     unpaidLeaveDays,
     extraPayDays,
     extraPay: r2(extraPay),
+    holidayDeductionDays: cutDays,
+    holidayDeduction: r2(holidayDeduction),
   };
+}
+
+// ------------------------------------------------------------ salary date & hold
+
+/**
+ * The salary date of a cycle: the chosen day of the month AFTER the cycle ends (a cycle is named after the month
+ * it ends in). Example: the Nov cycle with day 5 is paid on 5 Dec. Days are limited to 1–28, which every month has.
+ */
+export function salaryDateOf(year: number, month: number, day: number): Date {
+  const d = Math.min(28, Math.max(1, Math.round(Number(day)) || DEFAULT_SALARY_DISBURSEMENT_DAY));
+  return new Date(Date.UTC(year, month, d)); // month is 1-based, so this lands in the following month
+}
+
+/**
+ * Days the salary hold adds to the disbursement date: every unapproved day in an active (not released) run,
+ * times the delay per unapproved day. Example with 2 days per day: 1 day -> 2, 2 days -> 4, 3 days -> 6.
+ * Returns 0 when the hold rule is switched off.
+ */
+export function holdDelayDaysOf(
+  runs: { unapprovedDays: number; released: boolean }[],
+  delayPerDay: number,
+  enabled: boolean
+): number {
+  if (!enabled) return 0;
+  const per = Math.max(0, Math.round(Number(delayPerDay) || 0));
+  return runs.reduce((t, r) => (r.released ? t : t + Math.max(0, r.unapprovedDays) * per), 0);
+}
+
+// ------------------------------------------------------------ deduction log
+
+export type DeductionKind =
+  | "late"
+  | "late_marks"
+  | "early_leave"
+  | "half_day"
+  | "unpaid_leave"
+  | "unapproved_absence"
+  | "holiday_cut"
+  | "manual"
+  | "comp_off_covered";
+
+/**
+ * One line of the day-wise deduction log, shown to admins and employees. `amount` is the rupees taken off that day.
+ * `comp_off_covered` lines are 0: they explain an approved leave day that was paid by comp-off, so nothing was taken.
+ */
+export interface LedgerEntry {
+  date: string | null; // YYYY-MM-DD; null for manual deductions, which have no date
+  kind: DeductionKind;
+  reason: string;
+  amount: number;
+}
+
+export interface LedgerInput {
+  summary: MonthSummary;
+  dailyRate: number;
+  lateRule: DeductionRule;
+  halfDayRule: DeductionRule;
+  leaveRule: DeductionRule;
+  earlyLeaveRule?: DeductionRule;
+  lateMarks?: { limit: number; penaltyDays: number };
+  compOffUsed: number; // approved-leave days paid by comp-off (the earliest leave days of the cycle)
+  holidayBlocks: Date[]; // first day of each Sunday / holiday block that is cut
+  otherDeductions: { label: string; amount: number }[];
+}
+
+/** HH:MM on the company clock, or a dash when the time is not known. */
+export function clockText(minutes: number | null | undefined): string {
+  if (minutes === null || minutes === undefined) return "—";
+  const h = Math.floor(minutes / 60) % 24;
+  return `${String(h).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+}
+
+function halfDayReason(e: DayEvent): string {
+  const prefix = e.offDay ? "Half day on a weekly off or holiday: " : "Half day: ";
+  switch (e.halfDayCause) {
+    case "cutoff":
+      return `${prefix}punched in at ${clockText(e.punchInMinutes)}, after the half-day cut-off`;
+    case "left_early":
+      return `${prefix}left at ${clockText(e.punchOutMinutes)}, earlier than the allowed limit`;
+    case "no_punch_out":
+      return `${prefix}punched in at ${clockText(e.punchInMinutes)} but no punch-out was recorded`;
+    default:
+      return `${prefix}entered by admin`;
+  }
+}
+
+/**
+ * Builds the day-wise deduction log from the same day classification as the totals. Summing the amounts gives
+ * the absent days at one daily rate each, plus total deductions. Dated lines come first in date order; manual
+ * deductions (which have no date) come last.
+ */
+export function buildDeductionLedger(i: LedgerInput): LedgerEntry[] {
+  const unit = (rule: DeductionRule) => perUnit(rule, i.dailyRate);
+  const lateStep = i.lateMarks && i.lateMarks.limit > 0 ? i.lateMarks.limit : 0;
+  const penaltyEach = (i.lateMarks?.penaltyDays ?? 0) * i.dailyRate;
+  const out: LedgerEntry[] = [];
+  const events = [...(i.summary.events ?? [])].sort((a, b) => a.date.getTime() - b.date.getTime());
+  let lateCount = 0;
+  let leaveCount = 0;
+
+  for (const e of events) {
+    const date = dateKey(e.date);
+    if (e.absent) {
+      out.push({
+        date,
+        kind: "unapproved_absence",
+        reason: e.autoAbsent
+          ? `Auto-absent: punched in at ${clockText(e.punchInMinutes)}, after the late-percentage cut-off`
+          : "Unapproved absence: no punch and no approved leave",
+        amount: i.dailyRate,
+      });
+    }
+    if (e.leave) {
+      leaveCount += 1;
+      if (leaveCount <= i.compOffUsed) {
+        out.push({ date, kind: "comp_off_covered", reason: "Approved leave paid by comp-off, not deducted", amount: 0 });
+      } else {
+        out.push({ date, kind: "unpaid_leave", reason: "Approved leave not covered by comp-off", amount: unit(i.leaveRule) });
+      }
+    }
+    if (e.halfDay) {
+      out.push({ date, kind: "half_day", reason: halfDayReason(e), amount: unit(i.halfDayRule) });
+    }
+    if (e.lateDay) {
+      lateCount += 1;
+      out.push({
+        date,
+        kind: "late",
+        reason: `Late arrival: punched in at ${clockText(e.punchInMinutes)}, after the cool-off`,
+        amount: unit(i.lateRule),
+      });
+      if (lateStep > 0 && penaltyEach > 0 && lateCount % lateStep === 0) {
+        out.push({
+          date,
+          kind: "late_marks",
+          reason: `Late marks: late day ${lateCount}, every ${lateStep} late days cost ${i.lateMarks?.penaltyDays} day(s) of salary`,
+          amount: penaltyEach,
+        });
+      }
+    }
+    if (e.earlyLeave && i.earlyLeaveRule && unit(i.earlyLeaveRule) > 0) {
+      out.push({
+        date,
+        kind: "early_leave",
+        reason: `Early leave: left at ${clockText(e.punchOutMinutes)}, ${e.earlyLeaveMinutes} min before shift end`,
+        amount: unit(i.earlyLeaveRule),
+      });
+    }
+  }
+
+  for (const b of i.holidayBlocks) {
+    out.push({
+      date: dateKey(b),
+      kind: "holiday_cut",
+      reason: "Sunday / holiday pay cut: unauthorized leave around this weekly off or holiday",
+      amount: i.dailyRate,
+    });
+  }
+  for (const d of i.otherDeductions) {
+    out.push({ date: null, kind: "manual", reason: d.label, amount: Number(d.amount) || 0 });
+  }
+
+  return out
+    .map((x) => ({ ...x, amount: r2(x.amount) }))
+    .sort((a, b) => (a.date === null ? 1 : 0) - (b.date === null ? 1 : 0) || (a.date ?? "").localeCompare(b.date ?? ""));
+}
+
+/** Everything needed to decide whether a day is an unauthorized absence. Days outside [loadedStart, loadedEnd] are unknown. */
+export interface AbsenceContext {
+  weeklyOff: Set<number>;
+  holidays: Set<string>;
+  records: Map<string, DayRecord>;
+  approvedLeaves: { start: Date; end: Date }[];
+  todayLocal: Date;
+  joinDate?: Date | null;
+  loadedStart: Date;
+  loadedEnd: Date;
+}
+
+const DAY_MS = 86400000;
+
+/**
+ * True for a working day that has already passed with no punch, no half-day record and no approved leave.
+ * Mirrors the absence rule in summarizeMonth, so the two can never disagree.
+ */
+export function isUnauthorizedAbsence(day: Date, a: AbsenceContext): boolean {
+  const t = day.getTime();
+  if (t < a.loadedStart.getTime() || t > a.loadedEnd.getTime()) return false;
+  if (a.weeklyOff.has(day.getUTCDay()) || a.holidays.has(dateKey(day))) return false;
+  if (a.joinDate && t < a.joinDate.getTime()) return false;
+  if (t >= a.todayLocal.getTime()) return false;
+  const rec = a.records.get(dateKey(day));
+  if ((rec?.hasPunchIn && rec.status !== "absent") || rec?.status === "half_day") return false;
+  return !a.approvedLeaves.some((l) => t >= l.start.getTime() && t <= l.end.getTime());
+}
+
+/**
+ * Sunday / holiday pay cut. A block of consecutive non-working days (weekly offs and company holidays together,
+ * e.g. Sat + Sun + Mon holiday) is cut by ONE day's pay when, among the working days directly before and after
+ * the block, at least `triggerCount` (1 or 2) are unauthorized absences. Any punch inside the block cancels the cut.
+ * A block belongs to the cycle that contains its first day, so nothing is counted twice across cycles.
+ */
+export function holidayDeductionBlocks(period: Period, a: AbsenceContext, triggerCount: number): Date[] {
+  const need = Math.min(2, Math.max(1, Math.round(triggerCount) || 1));
+  const isOff = (t: number) => {
+    const d = new Date(t);
+    return a.weeklyOff.has(d.getUTCDay()) || a.holidays.has(dateKey(d));
+  };
+  const MAX_BLOCK_DAYS = 60; // safety stop for pathological calendars
+  const blocks: Date[] = [];
+
+  for (let t = period.start.getTime(); t <= period.end.getTime(); t += DAY_MS) {
+    if (!isOff(t) || isOff(t - DAY_MS)) continue; // only the first day of each block
+    let end = t;
+    for (let steps = 0; steps < MAX_BLOCK_DAYS && isOff(end + DAY_MS); steps++) end += DAY_MS;
+
+    let worked = false;
+    for (let x = t; x <= end; x += DAY_MS) {
+      const r = a.records.get(dateKey(new Date(x)));
+      if (r?.hasPunchIn && r.status !== "absent") {
+        worked = true;
+        break;
+      }
+    }
+    if (worked) continue;
+    if (a.joinDate && end < a.joinDate.getTime()) continue;
+
+    const unauthorized =
+      (isUnauthorizedAbsence(new Date(t - DAY_MS), a) ? 1 : 0) +
+      (isUnauthorizedAbsence(new Date(end + DAY_MS), a) ? 1 : 0);
+    if (unauthorized >= need) blocks.push(new Date(t));
+  }
+  return blocks;
+}
+
+/** How many Sunday / holiday cuts the period has (one daily rate each). */
+export function holidayDeductionDays(period: Period, a: AbsenceContext, triggerCount: number): number {
+  return holidayDeductionBlocks(period, a, triggerCount).length;
 }
 
 /** The salary cycle containing `today`, then the previous `count - 1` cycles (newest first). */
@@ -532,3 +873,110 @@ export function recentCycles(
   }
   return out;
 }
+
+// ------------------------------------------------------------ live dashboard
+
+/** The state of one employee on one day, as shown on the dashboard. */
+export type LiveState =
+  | "present" // on time (within the cool-off)
+  | "late" // punched in after the cool-off, before the half-day cut-off
+  | "half_day" // half day (late past the cut-off, early leave beyond the limit, or a manual half day)
+  | "absent" // no punch after the cool-off has passed, a day that has ended with no punch, or a punch marked absent
+  | "on_leave" // approved leave
+  | "off" // weekly off or company holiday (not counted)
+  | "waiting" // today, shift started, not punched in yet and still inside the cool-off (not counted yet)
+  | "not_started"; // future day, or before the employee joined (not counted)
+
+export interface LiveInput {
+  now: Date; // the real current instant
+  tz: string; // company timezone
+  workDate: Date; // UTC midnight of the local date being classified
+  todayLocal: Date; // UTC midnight of today's local date
+  shiftStart: string; // "HH:MM" for this employee
+  graceMinutes: number;
+  record?: { status: string; punchInTime: Date | null; punchOutTime: Date | null } | null;
+  onLeave: boolean;
+  offDay: boolean;
+  joinDate?: Date | null; // UTC midnight of the joining date
+}
+
+/**
+ * The state of an employee on `workDate`.
+ * Punched days use the status recorded at punch time (already reflects late / half-day / late-percentage rules),
+ * with a missing punch-out on a past day becoming a half day. Days with no punch are absent once the cool-off has
+ * passed (today) or once the day is over, unless they are on approved leave or off.
+ */
+export function liveDayState(i: LiveInput): LiveState {
+  if (i.joinDate && i.workDate.getTime() < i.joinDate.getTime()) return "not_started";
+  if (i.workDate.getTime() > i.todayLocal.getTime()) return "not_started";
+
+  if (i.record?.punchInTime) {
+    return effectiveStatus(
+      { status: i.record.status, hasPunchIn: true, hasPunchOut: !!i.record.punchOutTime },
+      i.workDate,
+      i.todayLocal
+    ) as LiveState;
+  }
+  // A half day entered directly on the attendance page (no punches) stays a half day.
+  if (i.record?.status === "half_day") return "half_day";
+  if (i.onLeave) return "on_leave";
+  if (i.offDay) return "off";
+
+  if (i.workDate.getTime() < i.todayLocal.getTime()) return "absent"; // the day has ended with no punch
+
+  // Today, not punched in yet.
+  const minutes = localParts(i.now, i.tz).minutes;
+  const start = parseHHMM(i.shiftStart);
+  if (minutes <= start + i.graceMinutes) return "waiting";
+  return "absent";
+}
+
+/** States that count toward range totals. Off, waiting and not-started days are not counted. */
+export const COUNTED_STATES: LiveState[] = ["present", "late", "half_day", "absent", "on_leave"];
+
+export interface RangeCounts {
+  present: number; // on time
+  late: number;
+  halfDay: number;
+  absent: number;
+  onLeave: number;
+}
+
+export function emptyCounts(): RangeCounts {
+  return { present: 0, late: 0, halfDay: 0, absent: 0, onLeave: 0 };
+}
+
+/** Adds one classified day to a running total. */
+export function addState(counts: RangeCounts, state: LiveState): void {
+  switch (state) {
+    case "present":
+      counts.present += 1;
+      break;
+    case "late":
+      counts.late += 1;
+      break;
+    case "half_day":
+      counts.halfDay += 1;
+      break;
+    case "absent":
+      counts.absent += 1;
+      break;
+    case "on_leave":
+      counts.onLeave += 1;
+      break;
+    default:
+      break;
+  }
+}
+
+/** Sort order for the live roster: what needs the admin's attention first. */
+export const STATE_ORDER: Record<LiveState, number> = {
+  absent: 0,
+  late: 1,
+  half_day: 2,
+  waiting: 3,
+  present: 4,
+  on_leave: 5,
+  off: 6,
+  not_started: 7,
+};

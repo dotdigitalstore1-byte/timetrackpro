@@ -12,8 +12,6 @@ const base = {
   lateRule: { type: "fixed" as const, value: 0 },
   halfDayRule: { type: "percentage" as const, value: 50 },
   leaveRule: { type: "percentage" as const, value: 100 }, // an unpaid leave day costs a full day
-  holdDaysPerOccurrence: 2,
-  releasedHoldCount: 0,
   otherDeductions: [],
 };
 const sum = (over: Record<string, unknown> = {}) => ({

@@ -167,7 +167,7 @@ const base = {
   lateRule: { type: "fixed" as const, value: 0 },
   halfDayRule: { type: "percentage" as const, value: 50 },
   leaveRule: { type: "percentage" as const, value: 0 },
-  holdDaysPerOccurrence: 2, releasedHoldCount: 0, otherDeductions: [],
+  otherDeductions: [],
 };
 
 test("late-marks rule: every 3 late days cost half a day", () => {

@@ -70,7 +70,10 @@ export interface OverviewRow {
   gross: number; // basic salary
   deductions: number; // everything taken off: absent days + late + half days + leave + early leave + other
   credits: number; // additions + overtime + extra pay
-  holds: number; // temporarily held (releasable)
+  holds: number; // money held under the earlier rule (0 for every new calculation)
+  salaryDate: string; // the chosen day of the month after the cycle ends
+  delayDays: number; // salary-hold delay: the disbursement date moves by this many days
+  disburseOn: string; // the day the salary is actually paid
   net: number; // net payable balance for this employee
   lateDays: number;
   halfDays: number;
@@ -119,6 +122,9 @@ export function toOverviewRow(c: SalaryComputation, org: OrgInfo, lateLimit: num
     deductions: round2(deductions),
     credits: round2(credits),
     holds: round2(r.holdAmount),
+    salaryDate: dateKey(c.salaryDate),
+    delayDays: r.holdDays,
+    disburseOn: dateKey(c.disbursementDate),
     net: round2(r.netPayable),
     lateDays: s.lateDays,
     halfDays: s.halfDays,
