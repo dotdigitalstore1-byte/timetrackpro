@@ -4,7 +4,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import Link from "next/link";
 import { api, useMe } from "@/lib/client";
 import { Button, Card, EmptyState, ErrorBanner, Input, PageHeader, Select, Spinner } from "@/components/ui";
-import { addDays, cyclePeriod, currentCycleKey, dateKey, salaryDateOf } from "@/lib/payroll";
+import { addDays, cyclePeriod, currentCycleKey, dateKey, localWorkDate, parseWeeklyOff, salaryDateOf } from "@/lib/payroll";
+import { WEEKDAY_NAMES } from "@/lib/attendance-days";
 import { formatDayKey, formatNumber, CURRENCY } from "@/lib/utils";
 
 // Everything is held as strings while editing so half-typed numbers never turn into NaN.
@@ -365,6 +366,13 @@ const INFO: Record<string, ReactNode> = {
       <p><b>Example.</b> Sunday is a weekly off. The employee takes Saturday and Monday off without approval. With the trigger set to <b>2 days</b>, Sunday&apos;s pay is cut by one day. With <b>1 day</b>, a single unauthorized day next to the block is enough.</p>
     </>
   ),
+  paidHoliday: (
+    <>
+      <p><b>How it works.</b> A paid holiday is a day off with full pay. Pick a salary cycle, then make any day of it a paid holiday, <b>including days that have already passed</b>. Nobody is marked absent on that day, an approved leave on it is not deducted, and no unapproved-day salary delay is created for it.</p>
+      <p><b>Example.</b> The admin forgot to make Saturday a weekly off, so the Saturdays of this cycle show as <b>Absent</b>. Open this rule, choose &quot;Mark all Saturdays&quot;, and every Saturday of the cycle becomes a paid holiday. The Absent marks disappear and the salary is recalculated. To make Saturday a weekly off from now on, tick it under Settings → Weekly off days.</p>
+      <p><b>Note.</b> A cycle that is already finalized is locked, because its salaries are fixed.</p>
+    </>
+  ),
   holidayCutToggle: (
     <>
       <p><b>Off:</b> Sunday and holiday pay is never cut. <b>On:</b> the trigger below applies to every weekly off and company holiday.</p>
@@ -408,6 +416,200 @@ const INFO: Record<string, ReactNode> = {
     </>
   ),
 };
+
+
+interface HolidayRow {
+  id: string;
+  holidayDate: string;
+  name: string;
+}
+interface LockedRange {
+  start: string;
+  end: string;
+}
+
+/**
+ * Paid holidays for one salary cycle. Each change is saved straight away (it is not part of "Save rules"),
+ * and it works for days that have already passed, as long as the cycle is not finalized yet.
+ */
+function PaidHolidays({ startDay }: { startDay: number }) {
+  const [holidays, setHolidays] = useState<HolidayRow[]>([]);
+  const [locked, setLocked] = useState<LockedRange[]>([]);
+  const [weeklyOff, setWeeklyOff] = useState<Set<number>>(new Set([0]));
+  const [today, setToday] = useState("");
+  const [cycle, setCycle] = useState<{ year: number; month: number } | null>(null);
+  const [name, setName] = useState("Paid holiday");
+  const [weekday, setWeekday] = useState("6");
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [note, setNote] = useState("");
+  const [ready, setReady] = useState(false);
+
+  const refresh = useCallback(async () => {
+    const data = await api<{ settings: { weeklyOff?: string; timezone?: string } | null; holidays: HolidayRow[]; lockedCycles?: LockedRange[]; today?: string }>("/api/settings");
+    setHolidays(data.holidays ?? []);
+    setLocked(data.lockedCycles ?? []);
+    const off = parseWeeklyOff(data.settings?.weeklyOff);
+    setWeeklyOff(off);
+    const t = data.today || dateKey(localWorkDate(new Date(), data.settings?.timezone || "UTC"));
+    setToday(t);
+    // Start on the current cycle; suggest Saturday when it is a working day, otherwise the first working weekday.
+    setCycle((c) => c ?? currentCycleKey(new Date(`${t}T00:00:00Z`), startDay));
+    setWeekday((w) => (off.has(Number(w)) ? String([6, 5, 1, 2, 3, 4, 0].find((d) => !off.has(d)) ?? 6) : w));
+  }, [startDay]);
+
+  useEffect(() => {
+    refresh()
+      .catch((e) => setError(e instanceof Error ? e.message : "Could not load holidays"))
+      .finally(() => setReady(true));
+  }, [refresh]);
+
+  useEffect(() => {
+    if (!note) return;
+    const t = window.setTimeout(() => setNote(""), 5000);
+    return () => window.clearTimeout(t);
+  }, [note]);
+
+  const period = useMemo(() => (cycle ? cyclePeriod(cycle.year, cycle.month, startDay) : null), [cycle, startDay]);
+  const holidayByDate = useMemo(() => new Map(holidays.map((h) => [h.holidayDate.slice(0, 10), h])), [holidays]);
+
+  const days = useMemo(() => {
+    if (!period) return [];
+    const out: { key: string; weekday: number }[] = [];
+    for (let t = period.start.getTime(); t <= period.end.getTime(); t += 86400000) {
+      const d = new Date(t);
+      out.push({ key: dateKey(d), weekday: d.getUTCDay() });
+    }
+    return out;
+  }, [period]);
+
+  const isLocked = (key: string) => locked.some((r) => key >= r.start && key <= r.end);
+  const cycleLocked = days.length > 0 && days.every((d) => isLocked(d.key));
+  const someLocked = days.some((d) => isLocked(d.key));
+
+  const move = (delta: number) =>
+    setCycle((c) => {
+      if (!c) return c;
+      const total = c.year * 12 + (c.month - 1) + delta;
+      return { year: Math.floor(total / 12), month: (total % 12) + 1 };
+    });
+
+  const run = async (id: string, body: Record<string, unknown>, done: string) => {
+    setBusy(id);
+    setError("");
+    setNote("");
+    try {
+      await api("/api/settings", { method: "POST", body: JSON.stringify(body) });
+      await refresh();
+      setNote(done);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not save the holiday");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const holidayName = name.trim() || "Paid holiday";
+  const addable = days.filter((d) => !weeklyOff.has(d.weekday) && !holidayByDate.has(d.key) && !isLocked(d.key));
+  const bulkDates = addable.filter((d) => d.weekday === Number(weekday)).map((d) => d.key);
+
+  if (!ready || !cycle || !period) return <div className="flex justify-center py-6"><Spinner /></div>;
+
+  const label = `${formatDayKey(dateKey(period.start))} – ${formatDayKey(dateKey(period.end))}`;
+  const current = currentCycleKey(new Date(`${today}T00:00:00Z`), startDay);
+  const isCurrent = current.year === cycle.year && current.month === cycle.month;
+
+  return (
+    <div>
+      {error && <p role="alert" className="mb-3 rounded-xl bg-rose-50 px-3.5 py-3 text-[13px] font-medium leading-relaxed text-rose-700">{error}</p>}
+      {note && <p role="status" className="mb-3 rounded-xl bg-emerald-50 px-3.5 py-3 text-[13px] font-medium leading-relaxed text-emerald-700">{note}</p>}
+
+      <div className="mb-3 flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-2 py-2">
+        <Button size="sm" variant="secondary" onClick={() => move(-1)}>← Earlier</Button>
+        <div className="min-w-0 text-center">
+          <p className="text-sm font-bold text-slate-900">{label}</p>
+          <p className="text-[11px] font-medium text-slate-500">{isCurrent ? "Current cycle" : cycleLocked ? "Finalized" : "Salary cycle"}</p>
+        </div>
+        <Button size="sm" variant="secondary" onClick={() => move(1)}>Later →</Button>
+      </div>
+
+      {someLocked && (
+        <p className="mb-3 rounded-xl bg-amber-50 px-3.5 py-3 text-[13px] font-medium leading-relaxed text-amber-800">
+          {cycleLocked ? "This cycle is finalized, so its holidays are locked." : "Some days of this cycle are already finalized and are locked."}
+        </p>
+      )}
+
+      <Fields>
+        <Input label="Holiday name" value={name} onChange={setName} placeholder="e.g. Saturday off, Diwali" />
+        <Select
+          label="Quick add: every …"
+          value={weekday}
+          onChange={setWeekday}
+          options={WEEKDAY_NAMES.map((w, i) => ({ value: String(i), label: weeklyOff.has(i) ? `${w} (already a weekly off)` : `${w}` }))}
+        />
+      </Fields>
+      <div className="mt-3">
+        <Button
+          size="sm"
+          disabled={bulkDates.length === 0 || busy !== ""}
+          loading={busy === "bulk"}
+          onClick={() =>
+            run("bulk", { holidays: { dates: bulkDates, name: holidayName } }, `${bulkDates.length} ${WEEKDAY_NAMES[Number(weekday)]}${bulkDates.length === 1 ? "" : "s"} made paid ${bulkDates.length === 1 ? "holiday" : "holidays"}.`)
+          }
+        >
+          {bulkDates.length > 0
+            ? `Make ${bulkDates.length} ${WEEKDAY_NAMES[Number(weekday)]}${bulkDates.length === 1 ? "" : "s"} in this cycle paid ${bulkDates.length === 1 ? "holiday" : "holidays"}`
+            : `No ${WEEKDAY_NAMES[Number(weekday)]} left to add in this cycle`}
+        </Button>
+      </div>
+
+      <p className="mb-2 mt-5 text-xs font-semibold text-slate-600">Or pick single days</p>
+      <ul className="max-h-96 divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-200 bg-white">
+        {days.map((d) => {
+          const h = holidayByDate.get(d.key);
+          const off = weeklyOff.has(d.weekday);
+          const lockedDay = isLocked(d.key);
+          const past = today !== "" && d.key < today;
+          const isToday = d.key === today;
+          return (
+            <li key={d.key} className={`flex items-center gap-3 px-3.5 py-2.5 ${isToday ? "bg-indigo-50/60" : ""}`}>
+              <div className="min-w-0 flex-1">
+                <p className="text-[13px] font-semibold text-slate-800">
+                  {formatDayKey(d.key)} <span className="font-normal text-slate-400">· {WEEKDAY_NAMES[d.weekday]}</span>
+                  {isToday && <span className="ml-1.5 rounded bg-indigo-600 px-1.5 py-0.5 text-[10px] font-bold text-white">TODAY</span>}
+                </p>
+                <p className="mt-0.5 text-[11px] leading-snug">
+                  {h ? (
+                    <span className="font-semibold text-emerald-700">Paid holiday · {h.name}</span>
+                  ) : off ? (
+                    <span className="text-slate-400">Weekly off</span>
+                  ) : (
+                    <span className="text-slate-500">Working day · {past ? "date passed" : isToday ? "today" : "upcoming"}</span>
+                  )}
+                  {lockedDay && <span className="ml-1.5 text-amber-700">· finalized</span>}
+                </p>
+              </div>
+              {!lockedDay && h && (
+                <Button size="sm" variant="secondary" loading={busy === h.id} disabled={busy !== ""} onClick={() => run(h.id, { deleteHolidayId: h.id }, "Holiday removed.")}>
+                  Remove
+                </Button>
+              )}
+              {!lockedDay && !h && !off && (
+                <Button size="sm" variant="secondary" loading={busy === d.key} disabled={busy !== ""} onClick={() => run(d.key, { holiday: { date: d.key, name: holidayName } }, `${formatDayKey(d.key)} is now a paid holiday.`)}>
+                  Make paid holiday
+                </Button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      <Note>
+        These changes are saved as soon as you tap, and are separate from the &quot;Save rules&quot; button. A paid holiday counts as a day off with full pay for every employee. Weekly offs are set under{" "}
+        <Link href="/settings" className="font-bold underline">Settings</Link>.
+      </Note>
+    </div>
+  );
+}
 
 export default function RulesPage() {
   const { me, loading: meLoading } = useMe();
@@ -501,6 +703,13 @@ export default function RulesPage() {
     if (isAdmin) void load();
     else if (!meLoading) setLoading(false);
   }, [isAdmin, meLoading, load]);
+
+  // A link such as /rules#rule-paid-holidays opens that rule.
+  useEffect(() => {
+    if (!ready) return;
+    const id = window.location.hash.replace("#", "");
+    if (id.startsWith("rule-")) setBus((b) => ({ ...b, jumpId: id, jumpStamp: b.jumpStamp + 1 }));
+  }, [ready]);
 
   const set = (patch: Partial<Form>) => setForm((f) => (f ? { ...f, ...patch } : f));
   const [bus, setBus] = useState<PageBus>({ open: false, stamp: 0, jumpId: "", jumpStamp: 0 });
@@ -867,9 +1076,20 @@ export default function RulesPage() {
             id={CATEGORY_IDS.deductions}
             icon="M15 12H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z"
             title="Deductions & absence"
-            note="Sunday and holiday pay, leave deductions, and how the salary base is worked out."
-            count={3}
+            note="Paid holidays, Sunday and holiday pay, leave deductions, and how the salary base is worked out."
+            count={4}
           >
+            <Section
+              id="rule-paid-holidays"
+              info={INFO.paidHoliday}
+              tone="neutral"
+              status="Per cycle · works for past dates"
+              title="Paid holidays for a cycle"
+              hint="Make any day of a salary cycle a paid day off, even a day that has already passed. Useful when a weekly off such as Saturday was never added."
+            >
+              <PaidHolidays startDay={num(savedStartDay) || 1} />
+            </Section>
+
             <Section id="rule-holiday-cut" info={INFO.holidayCut} tone={form.holidayDeductionEnabled ? "on" : "off"} status={form.holidayDeductionEnabled ? `On · ${num(form.holidayDeductionTriggerCount)} day trigger` : "Off"} title="Sunday & holiday pay cut" hint="Cuts Sunday or holiday pay when an employee takes unauthorized leave right before and after it.">
               <Toggle
                 info={INFO.holidayCutToggle}

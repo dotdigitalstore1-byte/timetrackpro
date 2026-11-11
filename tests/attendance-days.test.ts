@@ -107,3 +107,15 @@ test("status labels use the same wording on both pages", () => {
   assert.equal(statusLabel("half_day"), "Half day");
   assert.equal(statusLabel("absent"), "Absent");
 });
+
+test("a forgotten Saturday off: past Saturdays show Absent until they are made paid holidays", () => {
+  // 7 and 14 Nov 2026 are Saturdays. Saturday is NOT a weekly off here.
+  const before = new Map(scenario().map((d) => [d.date, d]));
+  assert.equal(before.get("2026-11-07")?.kind, "absent");
+  assert.equal(before.get("2026-11-14")?.kind, "upcoming"); // after "today" (11 Nov)
+
+  const after = new Map(scenario({ holidays: new Set(["2026-11-09", "2026-11-07", "2026-11-14"]) }).map((d) => [d.date, d]));
+  assert.equal(after.get("2026-11-07")?.kind, "off");
+  assert.equal(after.get("2026-11-07")?.label, "Holiday");
+  assert.equal(after.get("2026-11-14")?.kind, "off");
+});

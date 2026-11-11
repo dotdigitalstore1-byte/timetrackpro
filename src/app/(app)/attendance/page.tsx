@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { api, hasPower, useMe } from "@/lib/client";
 import { Badge, Button, Card, EmptyState, Input, Modal, PageHeader, Select, Spinner } from "@/components/ui";
 import { formatDayKey, formatTime, workingHours } from "@/lib/utils";
@@ -401,6 +402,9 @@ export default function AttendancePage() {
                           <td className="px-4 py-3">
                             <span className="whitespace-nowrap"><StatusBadge item={it} /></span>
                             {!r && it.note && <p className="mt-1 text-[11px] text-slate-400">{it.note}</p>}
+                            {!r && isAdmin && it.kind === "absent" && (
+                              <Link href="/rules#rule-paid-holidays" className="mt-1 block text-[11px] font-semibold text-indigo-600 hover:underline">Not a working day? Make it a paid holiday</Link>
+                            )}
                           </td>
                           <td className="px-4 py-3">{r ? <Photos record={r} allowed={canSeePhotos} /> : <span className="text-xs text-slate-300">—</span>}</td>
                           {canManage && (
@@ -433,6 +437,9 @@ export default function AttendancePage() {
                             {isToday && <span className="ml-2 rounded bg-indigo-600 px-1.5 py-0.5 align-middle text-[10px] font-bold text-white">TODAY</span>}
                           </p>
                           <p className="text-[11px] text-slate-400">{weekdayOf(it.date)}{it.note && !r ? ` · ${it.note}` : ""}</p>
+                          {!r && isAdmin && it.kind === "absent" && (
+                            <Link href="/rules#rule-paid-holidays" className="mt-0.5 block text-[11px] font-semibold text-indigo-600 hover:underline">Not a working day? Make it a paid holiday</Link>
+                          )}
                           {showEmployee && <p className="text-xs text-slate-500">{it.employeeName}{it.employeeCode ? ` · ${it.employeeCode}` : ""}</p>}
                         </div>
                         <div className="flex shrink-0 items-center gap-1.5">

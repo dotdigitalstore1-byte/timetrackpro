@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lte, or } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLogs, companies, companyBranding, companyHolidays, companySettings } from "@/db/schema";
-import { isValidTimezone } from "@/lib/payroll";
+import { auditLogs, companies, companyBranding, companyHolidays, companySettings, salaryRecords } from "@/db/schema";
+import { cyclePeriod, dateKey, isValidTimezone, localWorkDate } from "@/lib/payroll";
 import { loadCompanyProfile } from "@/lib/company-profile";
 import { getAuth } from "@/lib/auth";
 
@@ -15,13 +15,68 @@ export async function GET() {
   const settings = await db.select().from(companySettings).where(eq(companySettings.companyId, companyId)).limit(1);
   const holidays = await db.select().from(companyHolidays).where(eq(companyHolidays.companyId, companyId)).orderBy(asc(companyHolidays.holidayDate));
   const profile = await loadCompanyProfile(companyId);
+  const lockedCycles = await finalizedRanges(companyId);
 
   return NextResponse.json({
     settings: settings[0] ?? null,
     holidays,
     company: profile,
+    // Salary cycles that are already finalized. Their holidays are frozen (see POST).
+    lockedCycles,
+    today: dateKey(localWorkDate(new Date(), settings[0]?.timezone || "UTC")),
   });
 }
+
+// ---- Paid holidays: a company holiday is a paid day off. It can be added for any date of a cycle that is not
+// finalized yet (including days that have already passed), so a forgotten weekly off can be corrected.
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** The pay periods of finalized / paid salaries. Salaries finalized before cycles existed were calendar months. */
+async function finalizedRanges(companyId: string): Promise<{ start: string; end: string }[]> {
+  const rows = await db
+    .select({ year: salaryRecords.year, month: salaryRecords.month, periodStart: salaryRecords.periodStart, periodEnd: salaryRecords.periodEnd })
+    .from(salaryRecords)
+    .where(and(eq(salaryRecords.companyId, companyId), inArray(salaryRecords.status, ["finalized", "paid"])));
+  const seen = new Map<string, { start: string; end: string }>();
+  for (const r of rows) {
+    const p = r.periodStart && r.periodEnd ? { start: r.periodStart, end: r.periodEnd } : cyclePeriod(r.year, r.month, 1);
+    const range = { start: dateKey(p.start), end: dateKey(p.end) };
+    seen.set(`${range.start}|${range.end}`, range);
+  }
+  return [...seen.values()].sort((a, b) => a.start.localeCompare(b.start));
+}
+
+/** True when some employee's salary covering this date is already finalized. */
+async function isDateLocked(companyId: string, key: string): Promise<boolean> {
+  const day = new Date(`${key}T00:00:00Z`);
+  const rows = await db
+    .select({ id: salaryRecords.id })
+    .from(salaryRecords)
+    .where(
+      and(
+        eq(salaryRecords.companyId, companyId),
+        inArray(salaryRecords.status, ["finalized", "paid"]),
+        or(
+          and(lte(salaryRecords.periodStart, day), gte(salaryRecords.periodEnd, day)),
+          and(isNull(salaryRecords.periodStart), eq(salaryRecords.year, day.getUTCFullYear()), eq(salaryRecords.month, day.getUTCMonth() + 1))
+        )
+      )
+    )
+    .limit(1);
+  return rows.length > 0;
+}
+
+function validDateKey(key: string): boolean {
+  if (!DATE_RE.test(key)) return false;
+  const d = new Date(`${key}T00:00:00Z`);
+  if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== key) return false;
+  const year = d.getUTCFullYear();
+  const nowYear = new Date().getUTCFullYear();
+  return year >= nowYear - 2 && year <= nowYear + 2;
+}
+
+const LOCKED_MESSAGE = "That date belongs to a salary cycle that is already finalized, so its holidays can no longer be changed.";
 
 // ---- Company profile (name, address, tax ID, logo). Shown on salary slips.
 
@@ -174,20 +229,41 @@ export async function POST(req: Request) {
     }
   }
 
-  if (body.holiday) {
-    const h = body.holiday;
-    const date = String(h.date || "");
-    const name = String(h.name || "").trim().slice(0, 200);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !name) {
+  // One date: { holiday: { date, name } }. Several dates at once: { holidays: { dates: [...], name } }.
+  const holidayInput: { dates: string[]; name: string } | null = body.holidays
+    ? { dates: Array.isArray(body.holidays.dates) ? body.holidays.dates.map(String) : [], name: String(body.holidays.name || "").trim().slice(0, 200) }
+    : body.holiday
+      ? { dates: [String(body.holiday.date || "")], name: String(body.holiday.name || "").trim().slice(0, 200) }
+      : null;
+  let holidaysAdded = 0;
+  if (holidayInput) {
+    const dates = [...new Set(holidayInput.dates)].slice(0, 62);
+    if (dates.length === 0 || !holidayInput.name || dates.some((d) => !validDateKey(d))) {
       return NextResponse.json({ error: "Enter a holiday date and name." }, { status: 400 });
     }
-    await db
-      .insert(companyHolidays)
-      .values({ companyId, holidayDate: new Date(`${date}T00:00:00Z`), name })
-      .onConflictDoUpdate({ target: [companyHolidays.companyId, companyHolidays.holidayDate], set: { name } });
+    for (const d of dates) {
+      if (await isDateLocked(companyId, d)) return NextResponse.json({ error: LOCKED_MESSAGE }, { status: 409 });
+    }
+    for (const d of dates) {
+      await db
+        .insert(companyHolidays)
+        .values({ companyId, holidayDate: new Date(`${d}T00:00:00Z`), name: holidayInput.name })
+        .onConflictDoUpdate({ target: [companyHolidays.companyId, companyHolidays.holidayDate], set: { name: holidayInput.name } });
+    }
+    holidaysAdded = dates.length;
   }
   if (body.deleteHolidayId) {
-    await db.delete(companyHolidays).where(and(eq(companyHolidays.id, body.deleteHolidayId), eq(companyHolidays.companyId, companyId)));
+    const target = await db
+      .select()
+      .from(companyHolidays)
+      .where(and(eq(companyHolidays.id, body.deleteHolidayId), eq(companyHolidays.companyId, companyId)))
+      .limit(1);
+    if (target[0]) {
+      if (await isDateLocked(companyId, dateKey(target[0].holidayDate))) {
+        return NextResponse.json({ error: LOCKED_MESSAGE }, { status: 409 });
+      }
+      await db.delete(companyHolidays).where(and(eq(companyHolidays.id, target[0].id), eq(companyHolidays.companyId, companyId)));
+    }
   }
 
   await db.insert(auditLogs).values({
@@ -195,7 +271,7 @@ export async function POST(req: Request) {
     actorId: ctx.user.id,
     action: "settings.update",
     entity: "settings",
-    details: { body: { settings: body.settings ?? null, company: !!body.company, holiday: !!body.holiday, deleteHoliday: !!body.deleteHolidayId } },
+    details: { body: { settings: body.settings ?? null, company: !!body.company, holidaysAdded, holidayDates: holidayInput?.dates ?? [], deleteHoliday: !!body.deleteHolidayId } },
   });
 
   return NextResponse.json({ ok: true });

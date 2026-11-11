@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/client";
+import { weekdayOf } from "@/lib/attendance-days";
 import { Button, Card, Input, PageHeader, Select, Spinner } from "@/components/ui";
 
 interface Settings {
@@ -312,7 +313,7 @@ export default function SettingsPage() {
                 );
               })}
             </div>
-            <p className="mt-1 text-[11px] text-slate-400">Highlighted days are weekly offs. Absences are never counted on weekly offs or holidays.</p>
+            <p className="mt-1 text-[11px] text-slate-400">Highlighted days are weekly offs. Absences are never counted on weekly offs or holidays. Forgot one for the current cycle? Make those days paid holidays under <Link href="/rules#rule-paid-holidays" className="font-semibold text-indigo-600 underline">Rules</Link>.</p>
           </div>
 
           <h3 className="mb-2 mt-5 font-bold text-slate-900">General</h3>
@@ -342,7 +343,7 @@ export default function SettingsPage() {
               <div className="mb-3 space-y-2">
                 {holidays.map((h) => (
                   <div key={h.id} className="flex items-center justify-between rounded-xl border border-slate-100 px-3 py-2">
-                    <p className="text-sm text-slate-700"><span className="font-bold">{h.holidayDate.slice(0, 10)}</span> · {h.name}</p>
+                    <p className="text-sm text-slate-700"><span className="font-bold">{h.holidayDate.slice(0, 10)}</span> <span className="text-slate-400">{weekdayOf(h.holidayDate)}</span> · {h.name}</p>
                     <button onClick={() => deleteHoliday(h.id)} className="text-xs font-semibold text-rose-500 hover:underline">Delete</button>
                   </div>
                 ))}
