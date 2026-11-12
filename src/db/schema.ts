@@ -94,7 +94,7 @@ export const companySettings = pgTable("company_settings", {
   currency: varchar("currency", { length: 10 }).notNull().default("₹"),
   approvalLevels: integer("approval_levels").notNull().default(1), // 1 or 2
   timezone: varchar("timezone", { length: 50 }).notNull().default("UTC"),
-  weeklyOff: varchar("weekly_off", { length: 20 }).notNull().default("0,6"), // JS weekdays: 0=Sun … 6=Sat
+  weeklyOff: varchar("weekly_off", { length: 20 }).notNull().default("0"), // JS weekdays: 0=Sun … 6=Sat. New companies start with Sunday only; the admin adds any other weekly off.
   annualLeaveDays: integer("annual_leave_days").notNull().default(12),
 
   // ---- Rules: early leave (all default OFF so existing companies behave exactly as before)

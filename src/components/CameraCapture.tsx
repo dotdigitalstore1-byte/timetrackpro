@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Button } from "@/components/ui";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
  * Heavy compression for storage: photos are aimed at about 30 KB. The first setting is the best quality; the
@@ -17,6 +16,12 @@ const STEPS: { side: number; quality: number }[] = [
   { side: 280, quality: 0.3 },
   { side: 240, quality: 0.25 },
 ];
+
+/** The photo shown on the check screen is larger and clearer than the one that is stored. */
+const PREVIEW_SIDE = 960;
+const PREVIEW_QUALITY = 0.8;
+
+type Facing = "user" | "environment";
 
 interface Props {
   title: string;
@@ -36,18 +41,80 @@ function encodeFrame(video: HTMLVideoElement, side: number, quality: number): st
   return canvas.toDataURL("image/jpeg", quality);
 }
 
+function errorMessage(e: unknown): string {
+  const name = e instanceof DOMException ? e.name : "";
+  if (name === "NotAllowedError" || name === "SecurityError") {
+    return "Camera access was blocked. Allow camera access for this site in your browser settings, then try again.";
+  }
+  if (name === "NotFoundError" || name === "DevicesNotFoundError") return "No camera was found on this device.";
+  if (name === "NotReadableError" || name === "TrackStartError") {
+    return "The camera is being used by another app. Close it and try again.";
+  }
+  return "The camera could not be opened. Please try again.";
+}
+
+function CloseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
+      <path d="M6 6l12 12M18 6L6 18" />
+    </svg>
+  );
+}
+
+function FlipIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M16.02 9.35h4.99m0 0V4.36m0 4.99l-3.18-3.18a8.25 8.25 0 00-13.8 3.7M7.98 14.65H2.99m0 0v4.99m0-4.99l3.18 3.18a8.25 8.25 0 0013.8-3.7" />
+    </svg>
+  );
+}
+
 /**
- * Live in-app camera for punching. There is deliberately NO file picker here,
- * so a photo from the gallery cannot be submitted.
+ * Live in-app camera for punching, shown full screen.
+ *
+ * 1. Live view with a front/back camera switch and a Capture button.
+ * 2. Check screen: the photo that was taken, with Retake and Submit.
+ *
+ * There is deliberately NO file picker here, so a photo from the gallery cannot be submitted.
  */
 export default function CameraCapture({ title, onCapture, onCancel }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const [facing, setFacing] = useState<Facing>("user");
+  const [mirror, setMirror] = useState(true);
+  const [canFlip, setCanFlip] = useState(false);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
+  const [attempt, setAttempt] = useState(0);
+  const [shot, setShot] = useState<{ preview: string; upload: string } | null>(null);
+  const [sending, setSending] = useState(false);
+
+  // Keep the page behind the camera from scrolling.
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, []);
 
   useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !sending) onCancel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel, sending]);
+
+  // (Re)start the camera whenever the chosen side changes or the person taps "Try again".
+  useEffect(() => {
     let cancelled = false;
+    setReady(false);
+    setError("");
+
+    async function open(constraints: MediaStreamConstraints) {
+      return navigator.mediaDevices.getUserMedia(constraints);
+    }
 
     async function start() {
       if (!navigator.mediaDevices?.getUserMedia) {
@@ -55,23 +122,41 @@ export default function CameraCapture({ title, onCapture, onCancel }: Props) {
         return;
       }
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
-          audio: false,
-        });
+        let stream: MediaStream;
+        try {
+          stream = await open({
+            video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } },
+            audio: false,
+          });
+        } catch (e) {
+          const name = e instanceof DOMException ? e.name : "";
+          // This device has no camera on the requested side: use whichever camera it has.
+          if (name === "OverconstrainedError" || name === "NotFoundError") stream = await open({ video: true, audio: false });
+          else throw e;
+        }
         if (cancelled) {
           stream.getTracks().forEach((t) => t.stop());
           return;
         }
         streamRef.current = stream;
+        const settings = stream.getVideoTracks()[0]?.getSettings();
+        // Mirror only the front camera, like a mirror; webcams that do not say which side they are count as front.
+        setMirror(settings?.facingMode ? settings.facingMode === "user" : facing === "user");
         const video = videoRef.current;
         if (video) {
           video.srcObject = stream;
           await video.play().catch(() => undefined);
         }
-        setReady(true);
-      } catch {
-        setError("Camera access was blocked. Allow camera access for this site, then try again.");
+        // Device names are only available after the camera is allowed, so check for a second camera now.
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          if (!cancelled) setCanFlip(devices.filter((d) => d.kind === "videoinput").length > 1);
+        } catch {
+          if (!cancelled) setCanFlip(false);
+        }
+        if (!cancelled) setReady(true);
+      } catch (e) {
+        if (!cancelled) setError(errorMessage(e));
       }
     }
 
@@ -81,45 +166,156 @@ export default function CameraCapture({ title, onCapture, onCancel }: Props) {
       streamRef.current?.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
     };
-  }, []);
+  }, [facing, attempt]);
 
-  const take = () => {
+  const take = useCallback(() => {
     const video = videoRef.current;
     if (!video || video.readyState < 2 || !video.videoWidth) {
       setError("The camera is still starting. Try again in a moment.");
       return;
     }
-    let chosen: string | null = null;
+    const preview = encodeFrame(video, PREVIEW_SIDE, PREVIEW_QUALITY);
+    let upload: string | null = null;
     for (const step of STEPS) {
       const data = encodeFrame(video, step.side, step.quality);
       if (!data) break;
-      chosen = data;
+      upload = data;
       if (data.length <= TARGET_CHARS) break;
     }
-    if (!chosen) {
+    if (!upload) {
       setError("Could not process the photo. Please try again.");
       return;
     }
-    onCapture(chosen);
+    setShot({ preview: preview ?? upload, upload });
+  }, []);
+
+  const submit = () => {
+    if (!shot || sending) return;
+    setSending(true);
+    onCapture(shot.upload);
   };
 
+  const reviewing = !!shot;
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 p-4" role="dialog" aria-modal="true">
-      <div className="w-full max-w-sm rounded-2xl bg-white p-4 shadow-xl">
-        <h3 className="font-bold text-slate-900">{title}</h3>
-        <p className="mt-0.5 text-xs text-slate-500">Face the camera and tap Capture. Photos must be taken now.</p>
-
-        <div className="mt-3 aspect-[4/3] overflow-hidden rounded-xl bg-slate-900">
-          {/* Mirrored for a natural selfie preview; the captured frame itself is not mirrored. */}
-          <video ref={videoRef} playsInline muted className="h-full w-full scale-x-[-1] object-cover" />
+    <div className="fixed inset-0 z-50 flex h-dvh flex-col bg-black text-white" role="dialog" aria-modal="true" aria-label={title}>
+      {/* Top bar */}
+      <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={sending}
+          aria-label="Cancel"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/15 transition hover:bg-white/25 disabled:opacity-50"
+        >
+          <CloseIcon />
+        </button>
+        <div className="min-w-0 text-center">
+          <h2 className="truncate text-sm font-bold">{reviewing ? "Check your photo" : title}</h2>
+          <p className="text-xs text-white/70">{reviewing ? "Is your face clear and well lit?" : "Photos must be taken now"}</p>
         </div>
+        {reviewing || !canFlip ? (
+          <span className="h-11 w-11 shrink-0" aria-hidden="true" />
+        ) : (
+          <button
+            type="button"
+            onClick={() => setFacing((f) => (f === "user" ? "environment" : "user"))}
+            disabled={!ready && !error}
+            aria-label={facing === "user" ? "Switch to back camera" : "Switch to front camera"}
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/15 transition hover:bg-white/25 disabled:opacity-50"
+          >
+            <FlipIcon />
+          </button>
+        )}
+      </div>
 
-        {error && <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">{error}</p>}
+      {/* Live view, or the photo that was taken */}
+      <div className="relative min-h-0 flex-1 overflow-hidden bg-black">
+        <video
+          ref={videoRef}
+          playsInline
+          muted
+          className={`h-full w-full object-cover ${mirror ? "scale-x-[-1]" : ""} ${reviewing ? "hidden" : ""}`}
+        />
+        {reviewing && shot && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={shot.preview} alt="The photo you just took" className="h-full w-full object-contain" />
+        )}
 
-        <div className="mt-4 grid grid-cols-2 gap-3">
-          <Button variant="secondary" onClick={onCancel}>Cancel</Button>
-          <Button variant="success" onClick={take} disabled={!ready || !!error}>Capture</Button>
-        </div>
+        {!reviewing && ready && !error && (
+          <>
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <div className="aspect-[3/4] h-[62%] max-w-[80%] rounded-[50%] border-2 border-white/50" />
+            </div>
+            <p className="pointer-events-none absolute inset-x-0 bottom-3 text-center text-xs font-medium text-white/80 drop-shadow">
+              {facing === "user" ? "Keep your face inside the oval" : "Back camera on"}
+            </p>
+          </>
+        )}
+
+        {!reviewing && !ready && !error && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-sm text-white/80">
+            <span className="h-8 w-8 animate-spin rounded-full border-2 border-white/30 border-t-white" aria-hidden="true" />
+            Starting the camera…
+          </div>
+        )}
+
+        {error && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/85 px-8 text-center">
+            <p role="alert" className="max-w-sm text-sm font-medium leading-relaxed text-rose-200">{error}</p>
+            <div className="flex gap-3">
+              <button type="button" onClick={onCancel} className="rounded-xl bg-white/15 px-5 py-3 text-sm font-semibold hover:bg-white/25">
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setError("");
+                  setAttempt((a) => a + 1);
+                }}
+                className="rounded-xl bg-white px-5 py-3 text-sm font-bold text-slate-900 hover:bg-slate-100"
+              >
+                Try again
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Controls */}
+      <div className="px-6 pb-[calc(1.25rem+env(safe-area-inset-bottom))] pt-5">
+        {reviewing ? (
+          <div className="mx-auto grid max-w-md grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => setShot(null)}
+              disabled={sending}
+              className="min-h-14 rounded-2xl bg-white/15 px-4 text-base font-bold transition hover:bg-white/25 disabled:opacity-50"
+            >
+              Retake
+            </button>
+            <button
+              type="button"
+              onClick={submit}
+              disabled={sending}
+              className="min-h-14 rounded-2xl bg-emerald-500 px-4 text-base font-bold text-white transition hover:bg-emerald-400 disabled:opacity-60"
+            >
+              {sending ? "Submitting…" : "Submit"}
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center justify-center">
+            <button
+              type="button"
+              onClick={take}
+              disabled={!ready || !!error}
+              aria-label="Capture photo"
+              className="flex h-[4.5rem] w-[4.5rem] items-center justify-center rounded-full border-4 border-white bg-transparent transition active:scale-95 disabled:opacity-40"
+            >
+              <span className="h-14 w-14 rounded-full bg-white" />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

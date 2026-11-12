@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/client";
-import { weekdayOf } from "@/lib/attendance-days";
 import { Button, Card, Input, PageHeader, Select, Spinner } from "@/components/ui";
 
 interface Settings {
@@ -25,12 +24,6 @@ interface Settings {
   timezone: string;
   weeklyOff: string;
   annualLeaveDays: number;
-}
-
-interface Holiday {
-  id: string;
-  holidayDate: string;
-  name: string;
 }
 
 interface CompanyProfile {
@@ -173,9 +166,6 @@ function CompanyProfileCard({ initial, onSaved }: { initial: CompanyProfile; onS
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [company, setCompany] = useState<CompanyProfile | null>(null);
-  const [holidays, setHolidays] = useState<Holiday[]>([]);
-  const [hDate, setHDate] = useState("");
-  const [hName, setHName] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -185,9 +175,8 @@ export default function SettingsPage() {
   const load = useCallback(async () => {
     setLoadError("");
     try {
-      const data = await api<{ settings: Settings; holidays: Holiday[]; company: CompanyProfile | null }>("/api/settings");
+      const data = await api<{ settings: Settings; company: CompanyProfile | null }>("/api/settings");
       setSettings(data.settings);
-      setHolidays(data.holidays ?? []);
       setCompany(data.company ?? null);
     } catch (e) {
       setSettings(null);
@@ -208,10 +197,10 @@ export default function SettingsPage() {
     setError("");
     try {
       // Only this page's own fields: attendance rules and salary cycle are saved from the Rules page.
-      const { shiftStart, shiftEnd, timezone, annualLeaveDays, weeklyOff, approvalLevels } = settings;
+      const { shiftStart, shiftEnd, timezone, annualLeaveDays, approvalLevels } = settings;
       await api("/api/settings", {
         method: "POST",
-        body: JSON.stringify({ settings: { shiftStart, shiftEnd, timezone, annualLeaveDays, weeklyOff, approvalLevels } }),
+        body: JSON.stringify({ settings: { shiftStart, shiftEnd, timezone, annualLeaveDays, approvalLevels } }),
       });
       setMessage("Settings saved.");
       await load();
@@ -220,23 +209,6 @@ export default function SettingsPage() {
     } finally {
       setSaving(false);
     }
-  };
-
-  const saveHoliday = async () => {
-    setError("");
-    try {
-      await api("/api/settings", { method: "POST", body: JSON.stringify({ holiday: { date: hDate, name: hName } }) });
-      setHDate("");
-      setHName("");
-      await load();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to save holiday");
-    }
-  };
-
-  const deleteHoliday = async (id: string) => {
-    await api("/api/settings", { method: "POST", body: JSON.stringify({ deleteHolidayId: id }) });
-    await load();
   };
 
   const set = (patch: Partial<Settings>) => setSettings((s) => (s ? { ...s, ...patch } : s));
@@ -256,7 +228,7 @@ export default function SettingsPage() {
 
   return (
     <div>
-      <PageHeader title="Company Settings" subtitle="Company basics: working hours, calendar, holidays" />
+      <PageHeader title="Company Settings" subtitle="Company basics: working hours, leave and company profile" />
 
       {message && <p className="mb-4 rounded-xl bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">{message}</p>}
       {error && <p className="mb-4 rounded-xl bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">{error}</p>}
@@ -292,29 +264,9 @@ export default function SettingsPage() {
             </label>
             <Input label="Annual leave days per employee" type="number" value={settings.annualLeaveDays} onChange={(v) => set({ annualLeaveDays: Number(v) })} />
           </div>
-          <div className="mt-3">
-            <span className="mb-1 block text-xs font-semibold text-slate-600">Weekly off days</span>
-            <div className="flex flex-wrap gap-2">
-              {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d, i) => {
-                const off = settings.weeklyOff.split(",").map(Number).includes(i);
-                return (
-                  <button
-                    key={d}
-                    type="button"
-                    onClick={() => {
-                      const cur = new Set(settings.weeklyOff.split(",").filter(Boolean).map(Number));
-                      if (off) cur.delete(i); else cur.add(i);
-                      set({ weeklyOff: [...cur].sort().join(",") });
-                    }}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-bold ${off ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-500"}`}
-                  >
-                    {d}
-                  </button>
-                );
-              })}
-            </div>
-            <p className="mt-1 text-[11px] text-slate-400">Highlighted days are weekly offs. Absences are never counted on weekly offs or holidays. Forgot one for the current cycle? Make those days paid holidays under <Link href="/rules#rule-paid-holidays" className="font-semibold text-indigo-600 underline">Rules</Link>.</p>
-          </div>
+          <p className="mt-3 rounded-xl bg-slate-50 px-3.5 py-3 text-xs leading-relaxed text-slate-600">
+            Weekly off days and paid holidays are managed on the <Link href="/rules" className="font-semibold text-indigo-600 hover:underline">Rules page</Link>.
+          </p>
 
           <h3 className="mb-2 mt-5 font-bold text-slate-900">General</h3>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -334,27 +286,6 @@ export default function SettingsPage() {
 
         <div className="space-y-4">
           {company && <CompanyProfileCard initial={company} onSaved={load} />}
-
-          <Card>
-            <h3 className="mb-3 font-bold text-slate-900">Company Holidays</h3>
-            {holidays.length === 0 ? (
-              <p className="mb-3 text-sm text-slate-400">No holidays added.</p>
-            ) : (
-              <div className="mb-3 space-y-2">
-                {holidays.map((h) => (
-                  <div key={h.id} className="flex items-center justify-between rounded-xl border border-slate-100 px-3 py-2">
-                    <p className="text-sm text-slate-700"><span className="font-bold">{h.holidayDate.slice(0, 10)}</span> <span className="text-slate-400">{weekdayOf(h.holidayDate)}</span> · {h.name}</p>
-                    <button onClick={() => deleteHoliday(h.id)} className="text-xs font-semibold text-rose-500 hover:underline">Delete</button>
-                  </div>
-                ))}
-              </div>
-            )}
-            <div className="grid grid-cols-2 gap-3 rounded-xl bg-slate-50 p-3">
-              <Input label="Date" type="date" value={hDate} onChange={setHDate} />
-              <Input label="Name" value={hName} onChange={setHName} placeholder="e.g. Diwali" />
-              <Button className="col-span-2" size="sm" onClick={saveHoliday} disabled={!hDate || !hName.trim()}>Add holiday</Button>
-            </div>
-          </Card>
 
           <Card>
             <h3 className="mb-1 font-bold text-slate-900">Departments &amp; work locations</h3>

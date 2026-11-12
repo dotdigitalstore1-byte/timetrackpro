@@ -4,9 +4,9 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import Link from "next/link";
 import { api, useMe } from "@/lib/client";
 import { Button, Card, EmptyState, ErrorBanner, Input, PageHeader, Select, Spinner } from "@/components/ui";
-import { addDays, cyclePeriod, currentCycleKey, dateKey, localWorkDate, parseWeeklyOff, salaryDateOf } from "@/lib/payroll";
-import { WEEKDAY_NAMES } from "@/lib/attendance-days";
+import { addDays, cyclePeriod, currentCycleKey, dateKey, salaryDateOf } from "@/lib/payroll";
 import { formatDayKey, formatNumber, CURRENCY } from "@/lib/utils";
+import { weekdayOf } from "@/lib/attendance-days";
 
 // Everything is held as strings while editing so half-typed numbers never turn into NaN.
 const FIELDS = [
@@ -30,7 +30,34 @@ type Form = Record<(typeof FIELDS)[number], string> & {
   midCycleSlipEnabled: boolean;
   leaveAccrualMode: "carry" | "lapse";
   salaryHoldEnabled: boolean;
+  weeklyOff: string; // comma list of JS weekdays, 0 = Sunday … 6 = Saturday
 };
+
+interface Holiday {
+  id: string;
+  holidayDate: string;
+  name: string;
+}
+
+const WEEKDAYS = [
+  { n: 0, short: "Sun", long: "Sunday" },
+  { n: 1, short: "Mon", long: "Monday" },
+  { n: 2, short: "Tue", long: "Tuesday" },
+  { n: 3, short: "Wed", long: "Wednesday" },
+  { n: 4, short: "Thu", long: "Thursday" },
+  { n: 5, short: "Fri", long: "Friday" },
+  { n: 6, short: "Sat", long: "Saturday" },
+];
+
+const parseOffDays = (v: string): number[] =>
+  [...new Set(v.split(",").map((x) => Number(x.trim())).filter((n) => Number.isInteger(n) && n >= 0 && n <= 6))].sort();
+
+/** Moves a salary-cycle key (YYYY-MM) forward or back by whole months. */
+function shiftCycleKey(key: string, delta: number): string {
+  const [y, m] = key.split("-").map(Number);
+  const total = y * 12 + (m - 1) + delta;
+  return `${Math.floor(total / 12)}-${String((total % 12) + 1).padStart(2, "0")}`;
+}
 
 const DEDUCTION_TYPES = [
   { value: "percentage", label: "% of daily rate" },
@@ -71,6 +98,7 @@ const CATEGORY_IDS = {
   overtime: "rules-overtime",
   deductions: "rules-deductions",
   leave: "rules-leave",
+  holidays: "rules-holidays",
   records: "rules-records",
 } as const;
 
@@ -312,6 +340,18 @@ function Toggle({ label, on, onToggle, info }: { label: string; on: boolean; onT
  * practical example, so an admin knows the effect before turning it on or off.
  */
 const INFO: Record<string, ReactNode> = {
+  weeklyOff: (
+    <>
+      <p><b>How it works.</b> A weekly off is a day your company is closed every week. Nobody is marked absent on it, it is paid inside the 30-day salary month, and an employee who works on it earns a comp-off day. Any day that is not ticked is a normal working day, so a missing punch-in there is an absence.</p>
+      <p><b>Example.</b> Only Sunday is ticked. Saturday is a working day, so an employee with no punch-in on a Saturday is absent. Tick Saturday too and it becomes a paid day off for everyone.</p>
+    </>
+  ),
+  paidHoliday: (
+    <>
+      <p><b>How it works.</b> A paid holiday is a one-off day off for the whole company, such as Diwali. It works like a weekly off: nobody is marked absent and nothing is deducted for that day, unless the Sunday &amp; holiday pay cut rule applies. You can add one for any day of a salary cycle, including a day that has already passed, while that cycle&apos;s salary is not finalized. The cycle&apos;s pay is recalculated straight away. Once a cycle is finalized, its holidays are locked.</p>
+      <p><b>Example.</b> The office was closed on 12 November, so employees with no punch-in show as absent. Adding 12 November as a paid holiday removes that absence, and its deduction, for everyone, as long as the 26 Oct – 25 Nov salary is not finalized.</p>
+    </>
+  ),
   late: (
     <>
       <p><b>How it works.</b> The reference is each employee&apos;s own shift start. A punch-in inside the cool-off counts as on time. After the cool-off, and up to the half-day cut-off, the punch is <b>late</b>. After the cut-off it is a <b>half day</b>.</p>
@@ -366,13 +406,6 @@ const INFO: Record<string, ReactNode> = {
       <p><b>Example.</b> Sunday is a weekly off. The employee takes Saturday and Monday off without approval. With the trigger set to <b>2 days</b>, Sunday&apos;s pay is cut by one day. With <b>1 day</b>, a single unauthorized day next to the block is enough.</p>
     </>
   ),
-  paidHoliday: (
-    <>
-      <p><b>How it works.</b> A paid holiday is a day off with full pay. Pick a salary cycle, then make any day of it a paid holiday, <b>including days that have already passed</b>. Nobody is marked absent on that day, an approved leave on it is not deducted, and no unapproved-day salary delay is created for it.</p>
-      <p><b>Example.</b> The admin forgot to make Saturday a weekly off, so the Saturdays of this cycle show as <b>Absent</b>. Open this rule, choose &quot;Mark all Saturdays&quot;, and every Saturday of the cycle becomes a paid holiday. The Absent marks disappear and the salary is recalculated. To make Saturday a weekly off from now on, tick it under Settings → Weekly off days.</p>
-      <p><b>Note.</b> A cycle that is already finalized is locked, because its salaries are fixed.</p>
-    </>
-  ),
   holidayCutToggle: (
     <>
       <p><b>Off:</b> Sunday and holiday pay is never cut. <b>On:</b> the trigger below applies to every weekly off and company holiday.</p>
@@ -417,200 +450,6 @@ const INFO: Record<string, ReactNode> = {
   ),
 };
 
-
-interface HolidayRow {
-  id: string;
-  holidayDate: string;
-  name: string;
-}
-interface LockedRange {
-  start: string;
-  end: string;
-}
-
-/**
- * Paid holidays for one salary cycle. Each change is saved straight away (it is not part of "Save rules"),
- * and it works for days that have already passed, as long as the cycle is not finalized yet.
- */
-function PaidHolidays({ startDay }: { startDay: number }) {
-  const [holidays, setHolidays] = useState<HolidayRow[]>([]);
-  const [locked, setLocked] = useState<LockedRange[]>([]);
-  const [weeklyOff, setWeeklyOff] = useState<Set<number>>(new Set([0]));
-  const [today, setToday] = useState("");
-  const [cycle, setCycle] = useState<{ year: number; month: number } | null>(null);
-  const [name, setName] = useState("Paid holiday");
-  const [weekday, setWeekday] = useState("6");
-  const [busy, setBusy] = useState("");
-  const [error, setError] = useState("");
-  const [note, setNote] = useState("");
-  const [ready, setReady] = useState(false);
-
-  const refresh = useCallback(async () => {
-    const data = await api<{ settings: { weeklyOff?: string; timezone?: string } | null; holidays: HolidayRow[]; lockedCycles?: LockedRange[]; today?: string }>("/api/settings");
-    setHolidays(data.holidays ?? []);
-    setLocked(data.lockedCycles ?? []);
-    const off = parseWeeklyOff(data.settings?.weeklyOff);
-    setWeeklyOff(off);
-    const t = data.today || dateKey(localWorkDate(new Date(), data.settings?.timezone || "UTC"));
-    setToday(t);
-    // Start on the current cycle; suggest Saturday when it is a working day, otherwise the first working weekday.
-    setCycle((c) => c ?? currentCycleKey(new Date(`${t}T00:00:00Z`), startDay));
-    setWeekday((w) => (off.has(Number(w)) ? String([6, 5, 1, 2, 3, 4, 0].find((d) => !off.has(d)) ?? 6) : w));
-  }, [startDay]);
-
-  useEffect(() => {
-    refresh()
-      .catch((e) => setError(e instanceof Error ? e.message : "Could not load holidays"))
-      .finally(() => setReady(true));
-  }, [refresh]);
-
-  useEffect(() => {
-    if (!note) return;
-    const t = window.setTimeout(() => setNote(""), 5000);
-    return () => window.clearTimeout(t);
-  }, [note]);
-
-  const period = useMemo(() => (cycle ? cyclePeriod(cycle.year, cycle.month, startDay) : null), [cycle, startDay]);
-  const holidayByDate = useMemo(() => new Map(holidays.map((h) => [h.holidayDate.slice(0, 10), h])), [holidays]);
-
-  const days = useMemo(() => {
-    if (!period) return [];
-    const out: { key: string; weekday: number }[] = [];
-    for (let t = period.start.getTime(); t <= period.end.getTime(); t += 86400000) {
-      const d = new Date(t);
-      out.push({ key: dateKey(d), weekday: d.getUTCDay() });
-    }
-    return out;
-  }, [period]);
-
-  const isLocked = (key: string) => locked.some((r) => key >= r.start && key <= r.end);
-  const cycleLocked = days.length > 0 && days.every((d) => isLocked(d.key));
-  const someLocked = days.some((d) => isLocked(d.key));
-
-  const move = (delta: number) =>
-    setCycle((c) => {
-      if (!c) return c;
-      const total = c.year * 12 + (c.month - 1) + delta;
-      return { year: Math.floor(total / 12), month: (total % 12) + 1 };
-    });
-
-  const run = async (id: string, body: Record<string, unknown>, done: string) => {
-    setBusy(id);
-    setError("");
-    setNote("");
-    try {
-      await api("/api/settings", { method: "POST", body: JSON.stringify(body) });
-      await refresh();
-      setNote(done);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not save the holiday");
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const holidayName = name.trim() || "Paid holiday";
-  const addable = days.filter((d) => !weeklyOff.has(d.weekday) && !holidayByDate.has(d.key) && !isLocked(d.key));
-  const bulkDates = addable.filter((d) => d.weekday === Number(weekday)).map((d) => d.key);
-
-  if (!ready || !cycle || !period) return <div className="flex justify-center py-6"><Spinner /></div>;
-
-  const label = `${formatDayKey(dateKey(period.start))} – ${formatDayKey(dateKey(period.end))}`;
-  const current = currentCycleKey(new Date(`${today}T00:00:00Z`), startDay);
-  const isCurrent = current.year === cycle.year && current.month === cycle.month;
-
-  return (
-    <div>
-      {error && <p role="alert" className="mb-3 rounded-xl bg-rose-50 px-3.5 py-3 text-[13px] font-medium leading-relaxed text-rose-700">{error}</p>}
-      {note && <p role="status" className="mb-3 rounded-xl bg-emerald-50 px-3.5 py-3 text-[13px] font-medium leading-relaxed text-emerald-700">{note}</p>}
-
-      <div className="mb-3 flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-2 py-2">
-        <Button size="sm" variant="secondary" onClick={() => move(-1)}>← Earlier</Button>
-        <div className="min-w-0 text-center">
-          <p className="text-sm font-bold text-slate-900">{label}</p>
-          <p className="text-[11px] font-medium text-slate-500">{isCurrent ? "Current cycle" : cycleLocked ? "Finalized" : "Salary cycle"}</p>
-        </div>
-        <Button size="sm" variant="secondary" onClick={() => move(1)}>Later →</Button>
-      </div>
-
-      {someLocked && (
-        <p className="mb-3 rounded-xl bg-amber-50 px-3.5 py-3 text-[13px] font-medium leading-relaxed text-amber-800">
-          {cycleLocked ? "This cycle is finalized, so its holidays are locked." : "Some days of this cycle are already finalized and are locked."}
-        </p>
-      )}
-
-      <Fields>
-        <Input label="Holiday name" value={name} onChange={setName} placeholder="e.g. Saturday off, Diwali" />
-        <Select
-          label="Quick add: every …"
-          value={weekday}
-          onChange={setWeekday}
-          options={WEEKDAY_NAMES.map((w, i) => ({ value: String(i), label: weeklyOff.has(i) ? `${w} (already a weekly off)` : `${w}` }))}
-        />
-      </Fields>
-      <div className="mt-3">
-        <Button
-          size="sm"
-          disabled={bulkDates.length === 0 || busy !== ""}
-          loading={busy === "bulk"}
-          onClick={() =>
-            run("bulk", { holidays: { dates: bulkDates, name: holidayName } }, `${bulkDates.length} ${WEEKDAY_NAMES[Number(weekday)]}${bulkDates.length === 1 ? "" : "s"} made paid ${bulkDates.length === 1 ? "holiday" : "holidays"}.`)
-          }
-        >
-          {bulkDates.length > 0
-            ? `Make ${bulkDates.length} ${WEEKDAY_NAMES[Number(weekday)]}${bulkDates.length === 1 ? "" : "s"} in this cycle paid ${bulkDates.length === 1 ? "holiday" : "holidays"}`
-            : `No ${WEEKDAY_NAMES[Number(weekday)]} left to add in this cycle`}
-        </Button>
-      </div>
-
-      <p className="mb-2 mt-5 text-xs font-semibold text-slate-600">Or pick single days</p>
-      <ul className="max-h-96 divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-200 bg-white">
-        {days.map((d) => {
-          const h = holidayByDate.get(d.key);
-          const off = weeklyOff.has(d.weekday);
-          const lockedDay = isLocked(d.key);
-          const past = today !== "" && d.key < today;
-          const isToday = d.key === today;
-          return (
-            <li key={d.key} className={`flex items-center gap-3 px-3.5 py-2.5 ${isToday ? "bg-indigo-50/60" : ""}`}>
-              <div className="min-w-0 flex-1">
-                <p className="text-[13px] font-semibold text-slate-800">
-                  {formatDayKey(d.key)} <span className="font-normal text-slate-400">· {WEEKDAY_NAMES[d.weekday]}</span>
-                  {isToday && <span className="ml-1.5 rounded bg-indigo-600 px-1.5 py-0.5 text-[10px] font-bold text-white">TODAY</span>}
-                </p>
-                <p className="mt-0.5 text-[11px] leading-snug">
-                  {h ? (
-                    <span className="font-semibold text-emerald-700">Paid holiday · {h.name}</span>
-                  ) : off ? (
-                    <span className="text-slate-400">Weekly off</span>
-                  ) : (
-                    <span className="text-slate-500">Working day · {past ? "date passed" : isToday ? "today" : "upcoming"}</span>
-                  )}
-                  {lockedDay && <span className="ml-1.5 text-amber-700">· finalized</span>}
-                </p>
-              </div>
-              {!lockedDay && h && (
-                <Button size="sm" variant="secondary" loading={busy === h.id} disabled={busy !== ""} onClick={() => run(h.id, { deleteHolidayId: h.id }, "Holiday removed.")}>
-                  Remove
-                </Button>
-              )}
-              {!lockedDay && !h && !off && (
-                <Button size="sm" variant="secondary" loading={busy === d.key} disabled={busy !== ""} onClick={() => run(d.key, { holiday: { date: d.key, name: holidayName } }, `${formatDayKey(d.key)} is now a paid holiday.`)}>
-                  Make paid holiday
-                </Button>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-      <Note>
-        These changes are saved as soon as you tap, and are separate from the &quot;Save rules&quot; button. A paid holiday counts as a day off with full pay for every employee. Weekly offs are set under{" "}
-        <Link href="/settings" className="font-bold underline">Settings</Link>.
-      </Note>
-    </div>
-  );
-}
-
 export default function RulesPage() {
   const { me, loading: meLoading } = useMe();
   const isAdmin = me?.user.role === "company_admin";
@@ -624,6 +463,13 @@ export default function RulesPage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [holidays, setHolidays] = useState<Holiday[]>([]);
+  const [finalizedPeriods, setFinalizedPeriods] = useState<{ start: string; end: string }[]>([]);
+  const [hCycle, setHCycle] = useState(""); // YYYY-MM of the cycle being edited; empty = the current cycle
+  const [hDate, setHDate] = useState("");
+  const [hName, setHName] = useState("");
+  const [hBusy, setHBusy] = useState(false);
+  const [hError, setHError] = useState("");
   const [activeCat, setActiveCat] = useState<string>(CATEGORY_IDS.attendance);
   const ready = !!form;
   const isDirty = form ? JSON.stringify(form) !== snapshot : false;
@@ -674,7 +520,7 @@ export default function RulesPage() {
   const load = useCallback(async () => {
     setLoadError("");
     try {
-      const data = await api<{ settings: Record<string, unknown> | null }>("/api/settings");
+      const data = await api<{ settings: Record<string, unknown> | null; holidays?: Holiday[]; finalizedPeriods?: { start: string; end: string }[] }>("/api/settings");
       const s = data.settings;
       if (!s) throw new Error("Company settings are not available.");
       const f: Record<string, string> = {};
@@ -688,7 +534,10 @@ export default function RulesPage() {
         midCycleSlipEnabled: !!s.midCycleSlipEnabled,
         salaryHoldEnabled: s.salaryHoldEnabled !== false,
         leaveAccrualMode: s.leaveAccrualMode === "lapse" ? "lapse" : "carry",
+        weeklyOff: parseOffDays(String(s.weeklyOff ?? "0")).join(","),
       };
+      setHolidays(data.holidays ?? []);
+      setFinalizedPeriods(data.finalizedPeriods ?? []);
       setForm(next);
       setSnapshot(JSON.stringify(next));
       setSavedStartDay(String(s.salaryCycleStartDay ?? "1"));
@@ -704,17 +553,53 @@ export default function RulesPage() {
     else if (!meLoading) setLoading(false);
   }, [isAdmin, meLoading, load]);
 
-  // A link such as /rules#rule-paid-holidays opens that rule.
-  useEffect(() => {
-    if (!ready) return;
-    const id = window.location.hash.replace("#", "");
-    if (id.startsWith("rule-")) setBus((b) => ({ ...b, jumpId: id, jumpStamp: b.jumpStamp + 1 }));
-  }, [ready]);
-
   const set = (patch: Partial<Form>) => setForm((f) => (f ? { ...f, ...patch } : f));
   const [bus, setBus] = useState<PageBus>({ open: false, stamp: 0, jumpId: "", jumpStamp: 0 });
   const expandAll = (open: boolean) => setBus((b) => ({ ...b, open, stamp: b.stamp + 1 }));
   const jumpTo = (id: string) => setBus((b) => ({ ...b, jumpId: id, jumpStamp: b.jumpStamp + 1 }));
+
+  // Paid holidays save the moment they are added, so they never touch the unsaved rule edits on this page.
+  const refreshHolidays = async () => {
+    const data = await api<{ holidays?: Holiday[]; finalizedPeriods?: { start: string; end: string }[] }>("/api/settings");
+    setHolidays(data.holidays ?? []);
+    setFinalizedPeriods(data.finalizedPeriods ?? []);
+  };
+
+  const addHoliday = async (cycleStart: string, cycleEnd: string) => {
+    setHError("");
+    if (!hDate || !hName.trim()) return;
+    if (hDate < cycleStart || hDate > cycleEnd) {
+      setHError(`Pick a date inside this cycle (${formatDayKey(cycleStart)} to ${formatDayKey(cycleEnd)}).`);
+      return;
+    }
+    setHBusy(true);
+    try {
+      await api("/api/settings", { method: "POST", body: JSON.stringify({ holiday: { date: hDate, name: hName.trim() } }) });
+      setHDate("");
+      setHName("");
+      await refreshHolidays();
+      setMessage("Paid holiday added. Attendance and pay for that day are updated.");
+    } catch (e) {
+      setHError(e instanceof Error ? e.message : "Could not add the holiday");
+    } finally {
+      setHBusy(false);
+    }
+  };
+
+  const removeHoliday = async (h: Holiday) => {
+    if (!window.confirm(`Remove the paid holiday "${h.name}" on ${formatDayKey(h.holidayDate.slice(0, 10))}? That day will count as a normal working day again.`)) return;
+    setHError("");
+    setHBusy(true);
+    try {
+      await api("/api/settings", { method: "POST", body: JSON.stringify({ deleteHolidayId: h.id }) });
+      await refreshHolidays();
+      setMessage("Holiday removed.");
+    } catch (e) {
+      setHError(e instanceof Error ? e.message : "Could not remove the holiday");
+    } finally {
+      setHBusy(false);
+    }
+  };
 
   const save = async () => {
     if (!form) return;
@@ -727,6 +612,7 @@ export default function RulesPage() {
     setError("");
     try {
       const settings: Record<string, unknown> = {
+        weeklyOff: parseOffDays(form.weeklyOff).join(","),
         overtimeEnabled: form.overtimeEnabled,
         extraPayEnabled: form.extraPayEnabled,
         holidayDeductionEnabled: form.holidayDeductionEnabled,
@@ -804,11 +690,43 @@ export default function RulesPage() {
   const presetDays = [1, 6, 11, 16, 21, 26];
   const dailyExample = 30000 / SALARY_BASE_DAYS; // illustration only
 
+  // ---- weekly offs and paid holidays (these use the SAVED cycle start day, not one that is still being typed)
+  const offDays = parseOffDays(form.weeklyOff);
+  const offNames = offDays.length ? offDays.map((n) => WEEKDAYS[n].long).join(", ") : "None";
+  const savedSd = Math.min(28, Math.max(1, Math.round(Number(savedStartDay)) || 1));
+  const todayUtc = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate()));
+  const todayKey = dateKey(todayUtc);
+  const nowCycle = currentCycleKey(todayUtc, savedSd);
+  const nowCycleKey = `${nowCycle.year}-${String(nowCycle.month).padStart(2, "0")}`;
+  const selCycleKey = hCycle || nowCycleKey;
+  const [selYear, selMonth] = selCycleKey.split("-").map(Number);
+  const selPeriod = cyclePeriod(selYear, selMonth, savedSd);
+  const selStart = dateKey(selPeriod.start);
+  const selEnd = dateKey(selPeriod.end);
+  const nowPeriod = cyclePeriod(nowCycle.year, nowCycle.month, savedSd);
+  const inRange = (h: Holiday, a: string, b: string) => {
+    const d = h.holidayDate.slice(0, 10);
+    return d >= a && d <= b;
+  };
+  const cycleHolidays = holidays.filter((h) => inRange(h, selStart, selEnd));
+  const nowCycleHolidayCount = holidays.filter((h) => inRange(h, dateKey(nowPeriod.start), dateKey(nowPeriod.end))).length;
+  const selLocked = finalizedPeriods.some((p) => p.start <= selEnd && p.end >= selStart);
+  const toggleOffDay = (n: number) => {
+    const cur = new Set(offDays);
+    if (cur.has(n)) cur.delete(n);
+    else {
+      if (cur.size >= 6) return; // at least one day of the week must stay a working day
+      cur.add(n);
+    }
+    set({ weeklyOff: [...cur].sort().join(",") });
+  };
+
   const CATEGORIES = [
     { id: CATEGORY_IDS.attendance, label: "Attendance timing" },
     { id: CATEGORY_IDS.overtime, label: "Overtime & weekly-off" },
     { id: CATEGORY_IDS.deductions, label: "Deductions & absence" },
     { id: CATEGORY_IDS.leave, label: "Leave & salary cycle" },
+    { id: CATEGORY_IDS.holidays, label: "Weekly offs & holidays" },
     { id: CATEGORY_IDS.records, label: "Records & privacy" },
   ];
 
@@ -820,12 +738,12 @@ export default function RulesPage() {
   const glance = [
     { id: "rule-half-day", label: "Salary hold", value: form.salaryHoldEnabled ? `${num(form.unapprovedHoldDays)} days per unapproved day` : "Off", on: form.salaryHoldEnabled },
     { id: "rule-salary-cycle", label: "Salary date", value: `${ordinal(num(form.salaryDisbursementDay) || 5)} of next month`, on: true },
-    { id: "rule-late", label: "Cool-off", value: `${num(form.graceMinutes)} min`, on: true },
-    { id: "rule-late", label: "Half day after", value: `${num(form.lateThresholdMinutes)} min late`, on: true },
+    { id: "rule-late", label: "Late rule", value: `${num(form.graceMinutes)} min cool-off, half day after ${num(form.lateThresholdMinutes)}`, on: true },
     { id: "rule-auto-absent", label: "Auto-absent", value: form.absentAfterPercentEnabled ? `After ${num(form.absentAfterPercent)}% of shift` : "Off", on: form.absentAfterPercentEnabled },
     { id: "rule-overtime", label: "Overtime", value: form.overtimeEnabled ? `${num(form.overtimeRate)}× pay` : "Off", on: form.overtimeEnabled },
     { id: "rule-holiday-cut", label: "Holiday pay cut", value: form.holidayDeductionEnabled ? `${num(form.holidayDeductionTriggerCount)} day trigger` : "Off", on: form.holidayDeductionEnabled },
-    { id: "rule-mid-cycle-slip", label: "Mid-cycle slips", value: form.midCycleSlipEnabled ? "Allowed" : "After finalize", on: form.midCycleSlipEnabled },
+    { id: "rule-weekly-off", label: "Weekly off", value: offDays.length ? offDays.map((n) => WEEKDAYS[n].short).join(", ") : "None", on: offDays.length > 0 },
+    { id: "rule-paid-holidays", label: "Paid holidays", value: nowCycleHolidayCount > 0 ? `${nowCycleHolidayCount} this cycle` : "None this cycle", on: nowCycleHolidayCount > 0 },
   ];
 
   return (
@@ -1076,20 +994,9 @@ export default function RulesPage() {
             id={CATEGORY_IDS.deductions}
             icon="M15 12H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z"
             title="Deductions & absence"
-            note="Paid holidays, Sunday and holiday pay, leave deductions, and how the salary base is worked out."
-            count={4}
+            note="Sunday and holiday pay, leave deductions, and how the salary base is worked out."
+            count={3}
           >
-            <Section
-              id="rule-paid-holidays"
-              info={INFO.paidHoliday}
-              tone="neutral"
-              status="Per cycle · works for past dates"
-              title="Paid holidays for a cycle"
-              hint="Make any day of a salary cycle a paid day off, even a day that has already passed. Useful when a weekly off such as Saturday was never added."
-            >
-              <PaidHolidays startDay={num(savedStartDay) || 1} />
-            </Section>
-
             <Section id="rule-holiday-cut" info={INFO.holidayCut} tone={form.holidayDeductionEnabled ? "on" : "off"} status={form.holidayDeductionEnabled ? `On · ${num(form.holidayDeductionTriggerCount)} day trigger` : "Off"} title="Sunday & holiday pay cut" hint="Cuts Sunday or holiday pay when an employee takes unauthorized leave right before and after it.">
               <Toggle
                 info={INFO.holidayCutToggle}
@@ -1246,6 +1153,164 @@ export default function RulesPage() {
           </Category>
 
           <Category
+            id={CATEGORY_IDS.holidays}
+            icon="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2zm7-6.5l1.2 2.4 2.6.4-1.9 1.8.5 2.6-2.4-1.3-2.4 1.3.5-2.6-1.9-1.8 2.6-.4L12 14.5z"
+            title="Weekly offs & paid holidays"
+            note="The days your company is closed, every week and on special dates."
+            count={2}
+          >
+            <Section
+              id="rule-weekly-off"
+              info={INFO.weeklyOff}
+              tone={offDays.length > 0 ? "on" : "off"}
+              status={offNames}
+              title="Weekly off days"
+              hint="Days your company is closed every week. Every day you do not tick is a normal working day."
+            >
+              <div role="group" aria-label="Weekly off days" className="grid grid-cols-4 gap-2 sm:grid-cols-7">
+                {WEEKDAYS.map((d) => {
+                  const on = offDays.includes(d.n);
+                  return (
+                    <button
+                      key={d.n}
+                      type="button"
+                      aria-pressed={on}
+                      onClick={() => toggleOffDay(d.n)}
+                      className={`min-h-12 rounded-xl border px-2 py-2 text-center transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 ${
+                        on ? "border-indigo-600 bg-indigo-600 text-white shadow-sm" : "border-slate-300 bg-white text-slate-700 hover:border-slate-400"
+                      }`}
+                    >
+                      <span className="block text-sm font-bold">{d.short}</span>
+                      <span className={`block text-[10px] font-semibold ${on ? "text-indigo-100" : "text-slate-400"}`}>{on ? "Off" : "Working"}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <Example>
+                Saturday is {offDays.includes(6) ? <b>a weekly off</b> : <b>a normal working day</b>}
+                {offDays.includes(6)
+                  ? ": nobody is marked absent on it, and it is paid. Untick it above if your company works on Saturdays."
+                  : ": a missing punch-in on a Saturday is an absence, and Saturday punches count as a regular day."}{" "}
+                Weekly offs are paid inside the 30-day salary month, and working on one earns a comp-off day.
+              </Example>
+              <Note>Press Save rules to apply a change. It applies to every salary cycle that is not finalized yet.</Note>
+            </Section>
+
+            <Section
+              id="rule-paid-holidays"
+              info={INFO.paidHoliday}
+              tone={cycleHolidays.length > 0 ? "on" : "neutral"}
+              status={`${cycleHolidays.length} ${cycleHolidays.length === 1 ? "holiday" : "holidays"} in the cycle shown`}
+              title="Paid holidays"
+              hint="Make any day of a salary cycle a paid holiday, including days that have already passed."
+            >
+              <div className="mb-3 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setHCycle(shiftCycleKey(selCycleKey, -1) === nowCycleKey ? "" : shiftCycleKey(selCycleKey, -1))}
+                  aria-label="Previous salary cycle"
+                  className="flex min-h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-300 bg-white text-lg text-slate-600 hover:bg-slate-50"
+                >
+                  ‹
+                </button>
+                <div className="min-w-0 flex-1 rounded-xl bg-white px-3 py-2 text-center ring-1 ring-slate-200">
+                  <p className="text-sm font-bold text-slate-900">{formatDayKey(selStart)} – {formatDayKey(selEnd)}</p>
+                  <p className="text-[11px] font-medium text-slate-500">{selCycleKey === nowCycleKey ? "Current salary cycle" : "Salary cycle"}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setHCycle(shiftCycleKey(selCycleKey, 1) === nowCycleKey ? "" : shiftCycleKey(selCycleKey, 1))}
+                  aria-label="Next salary cycle"
+                  className="flex min-h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-300 bg-white text-lg text-slate-600 hover:bg-slate-50"
+                >
+                  ›
+                </button>
+              </div>
+              {selCycleKey !== nowCycleKey && (
+                <button type="button" onClick={() => setHCycle("")} className="mb-3 text-xs font-semibold text-indigo-600 hover:underline">
+                  Back to the current cycle
+                </button>
+              )}
+
+              {selLocked && (
+                <p className="mb-3 rounded-xl bg-amber-50 px-3.5 py-3 text-[13px] font-medium leading-relaxed text-amber-800">
+                  The salary for this cycle is already finalized, so its holidays are locked. This keeps the pay that was finalized correct.
+                </p>
+              )}
+
+              {cycleHolidays.length === 0 ? (
+                <p className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-5 text-center text-sm text-slate-500">
+                  No paid holidays in this cycle yet.
+                </p>
+              ) : (
+                <ul className="divide-y divide-slate-200 overflow-hidden rounded-xl border border-slate-200 bg-white">
+                  {cycleHolidays.map((h) => {
+                    const day = h.holidayDate.slice(0, 10);
+                    const when = day < todayKey ? "Passed" : day === todayKey ? "Today" : "Upcoming";
+                    return (
+                      <li key={h.id} className="flex items-center gap-3 px-4 py-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-semibold text-slate-900">{h.name}</p>
+                          <p className="text-xs text-slate-500">
+                            {formatDayKey(day)} · {weekdayOf(day)}
+                          </p>
+                        </div>
+                        <span
+                          className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${
+                            when === "Passed" ? "bg-slate-100 text-slate-500" : when === "Today" ? "bg-indigo-50 text-indigo-700" : "bg-emerald-50 text-emerald-700"
+                          }`}
+                        >
+                          {when}
+                        </span>
+                        {!selLocked && (
+                          <button
+                            type="button"
+                            onClick={() => removeHoliday(h)}
+                            disabled={hBusy}
+                            className="shrink-0 rounded-lg px-2 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 disabled:opacity-50"
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+
+              {!selLocked && (
+                <SubBlock title="Add a paid holiday">
+                  <Fields>
+                    <Input label="Date (inside this cycle)" type="date" min={selStart} max={selEnd} value={hDate} onChange={setHDate} />
+                    <Input label="Holiday name" value={hName} onChange={setHName} placeholder="e.g. Diwali" />
+                  </Fields>
+                  {hError && (
+                    <p role="alert" className="mt-3 rounded-xl bg-rose-50 px-3.5 py-3 text-[13px] font-medium leading-relaxed text-rose-700">
+                      {hError}
+                    </p>
+                  )}
+                  <Button className="mt-3 w-full sm:w-auto" onClick={() => addHoliday(selStart, selEnd)} loading={hBusy} disabled={!hDate || !hName.trim()}>
+                    Add paid holiday
+                  </Button>
+                  <Example>
+                    {hDate && hName.trim() ? (
+                      <>
+                        <b>{formatDayKey(hDate)}</b> becomes a paid holiday called <b>{hName.trim()}</b>. Nobody is marked absent for it and nothing is deducted
+                        {hDate < todayKey ? ". The day has already passed, so attendance and pay for this cycle are recalculated as soon as you add it" : ""}.
+                      </>
+                    ) : (
+                      <>
+                        Pick a date and a name. A paid holiday is saved straight away, and past dates are allowed while the cycle&apos;s salary is not finalized.
+                        It shows as <b>Holiday</b> on the Attendance page.
+                      </>
+                    )}
+                  </Example>
+                </SubBlock>
+              )}
+            </Section>
+          </Category>
+
+          <Category
             id={CATEGORY_IDS.records}
             icon="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
             title="Records & privacy"
@@ -1302,7 +1367,9 @@ export default function RulesPage() {
       {message && (
         <div
           role="status"
-          className="fixed inset-x-4 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-50 mx-auto flex max-w-md items-start gap-3 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-medium text-white shadow-lg lg:bottom-6 lg:left-72 lg:right-0"
+          className={`fixed inset-x-4 z-50 mx-auto flex max-w-md items-start gap-3 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-medium text-white shadow-lg lg:left-72 lg:right-0 ${
+            dirty ? "bottom-[calc(8.5rem+env(safe-area-inset-bottom))] lg:bottom-24" : "bottom-[calc(4.75rem+env(safe-area-inset-bottom))] lg:bottom-6"
+          }`}
         >
           <svg viewBox="0 0 20 20" aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" fill="currentColor">
             <path fillRule="evenodd" d="M16.7 5.3a1 1 0 010 1.4l-7.5 7.5a1 1 0 01-1.4 0L3.3 9.7a1 1 0 111.4-1.4l3.8 3.8 6.8-6.8a1 1 0 011.4 0z" clipRule="evenodd" />
