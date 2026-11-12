@@ -26,8 +26,11 @@ import {
 import { haversineMeters } from "@/lib/utils";
 import { verifyChallenge } from "@/lib/capture-token";
 
-/** Largest accepted photo (characters of the data URL). ~190 KB; the client sends ~40-70 KB. */
-const MAX_PHOTO_CHARS = 250_000;
+/**
+ * Largest accepted photo (characters of the data URL). A 100 KB JPEG is about 133,400 base64 characters, so this
+ * enforces the 100 KB ceiling on the server too. The in-app camera sends 50-100 KB.
+ */
+const MAX_PHOTO_CHARS = 140_000;
 /** GPS fixes less accurate than this are rejected (metres). */
 const MAX_ACCURACY_METERS = 150;
 /** A punch-out this far from the punch-in, this fast, is not physically possible (km/h). */

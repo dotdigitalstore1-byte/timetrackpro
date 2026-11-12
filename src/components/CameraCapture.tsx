@@ -3,23 +3,35 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
- * Heavy compression for storage: photos are aimed at about 30 KB. The first setting is the best quality; the
- * encoder only steps down (smaller side, lower quality) while the photo is still too big. 280 px is still
- * enough to see the face clearly for attendance checks.
+ * Photo size policy: every stored photo is between 50 KB and 100 KB (decimal kilobytes of JPEG data).
+ *
+ * The encoder walks down this list, best quality first, and keeps the first photo of at most TARGET_BYTES, which
+ * lands most photos between 50 and 75 KB. The server refuses anything above 100 KB. Photos are stored as text in the
+ * database (base64 is about a third larger than the JPEG), so staying near the middle of the range matters.
  */
-const TARGET_CHARS = 40_000; // base64 characters, roughly 30 KB of JPEG
+const MIN_BYTES = 50_000;
+const TARGET_BYTES = 75_000;
+const MAX_BYTES = 100_000;
 const STEPS: { side: number; quality: number }[] = [
-  { side: 400, quality: 0.5 },
-  { side: 360, quality: 0.45 },
-  { side: 320, quality: 0.4 },
-  { side: 320, quality: 0.3 },
-  { side: 280, quality: 0.3 },
-  { side: 240, quality: 0.25 },
+  { side: 1024, quality: 0.85 },
+  { side: 960, quality: 0.8 },
+  { side: 800, quality: 0.75 },
+  { side: 720, quality: 0.7 },
+  { side: 640, quality: 0.7 },
+  { side: 640, quality: 0.6 },
+  { side: 560, quality: 0.55 },
+  { side: 480, quality: 0.5 },
+  { side: 480, quality: 0.4 },
+  { side: 400, quality: 0.35 },
 ];
 
-/** The photo shown on the check screen is larger and clearer than the one that is stored. */
-const PREVIEW_SIDE = 960;
-const PREVIEW_QUALITY = 0.8;
+/** Real size in bytes of the JPEG inside a base64 data URL. */
+function bytesOf(dataUrl: string): number {
+  const comma = dataUrl.indexOf(",");
+  const b64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+  const padding = b64.endsWith("==") ? 2 : b64.endsWith("=") ? 1 : 0;
+  return Math.floor((b64.length * 3) / 4) - padding;
+}
 
 type Facing = "user" | "environment";
 
@@ -174,19 +186,27 @@ export default function CameraCapture({ title, onCapture, onCancel }: Props) {
       setError("The camera is still starting. Try again in a moment.");
       return;
     }
-    const preview = encodeFrame(video, PREVIEW_SIDE, PREVIEW_QUALITY);
+    // First photo that fits the target. If that step fell below the 50 KB floor while the step before it was
+    // still within the 100 KB ceiling, keep the earlier, larger one so the photo stays inside the range.
     let upload: string | null = null;
+    let larger: string | null = null;
     for (const step of STEPS) {
       const data = encodeFrame(video, step.side, step.quality);
       if (!data) break;
-      upload = data;
-      if (data.length <= TARGET_CHARS) break;
+      const size = bytesOf(data);
+      if (size <= TARGET_BYTES) {
+        upload = size < MIN_BYTES && larger ? larger : data;
+        break;
+      }
+      if (size <= MAX_BYTES) larger = data;
+      upload = data; // smallest so far, used only if no step reaches the target
     }
-    if (!upload) {
-      setError("Could not process the photo. Please try again.");
+    if (!upload || bytesOf(upload) > MAX_BYTES) {
+      setError("Could not make the photo small enough. Please retake it with better light, or closer to the camera.");
       return;
     }
-    setShot({ preview: preview ?? upload, upload });
+    // The check screen shows exactly the photo that will be submitted.
+    setShot({ preview: upload, upload });
   }, []);
 
   const submit = () => {

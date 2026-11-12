@@ -21,7 +21,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const MAX_JSON_ROWS = 3000;
 const MAX_XLSX_ROWS = 20000;
-const MAX_ROWS_WITH_PHOTOS = 400; // each photo is ~50 KB; larger exports must be split by date or employee
+const MAX_ROWS_WITH_PHOTOS = 250; // each photo is 50-100 KB; larger exports must be split by date or employee
 
 /**
  * Photo audit + bulk export for company admins.

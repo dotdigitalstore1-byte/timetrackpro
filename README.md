@@ -119,7 +119,8 @@ Deploy to Vercel: add `DATABASE_URL`, `SUPER_ADMIN_*` as environment variables. 
 * **Photo retention (45 days):** punch photos are deleted 45 days after their work date; the attendance row, times and
   salary figures are kept. **Attendance records without photos are kept 90 days**, then deleted (see *Retention* below).
   Deletion runs from a scheduled job: `POST /api/maintenance/purge-photos` with header `Authorization: Bearer $CRON_SECRET`.
-  Set `CRON_SECRET` to a long random value and schedule that request once a day (e.g. a Coolify scheduled task). Without it the
+  Set `CRON_SECRET` to a long random value. On Vercel the included `vercel.json` schedules the purge once a day (Vercel sends
+  the secret itself); elsewhere schedule that request once a day (e.g. a Coolify scheduled task). Without it the
   endpoint refuses to run, and photos are still cleared whenever an admin opens Photo audit.
 * **Photo audit** (company admin, under *More*): review punch photos by salary cycle, employee and department in a grid
   of large photos, enlarge any photo and download it individually. **Download Excel** exports the attendance data for the
@@ -282,8 +283,15 @@ attendance rows to an archive table instead of deleting them. The job never dele
 * Recommended for Vercel/serverless: use the pooled connection string and keep `DB_POOL_MAX` small (see above).
 
 ### Photo compression
-Photos are compressed toward about 65 KB. The camera tries the best setting first (480 px, quality 0.6) and steps down only
-when the photo is still too large, down to 360 px at quality 0.35. Faces stay clear at every step.
+Every punch photo is 50-100 KB. The camera tries the best setting first (1024 px, quality 0.85) and steps down until the
+photo is at most about 75 KB, so most photos land between 50 and 75 KB. If a step would fall below 50 KB while the previous
+one was still under 100 KB, the larger photo is kept. The server rejects anything above 100 KB. The camera view shows the
+exact photo that is submitted.
+
+Storage maths: photos are stored as base64 text in the database, which is about a third larger than the JPEG. 50 employees
+punching twice a day for 45 days is about 3,900 to 4,500 photos, roughly 270 to 340 MB at 50-75 KB per photo (and up to
+about 600 MB if every photo were 100 KB). Supabase's free database is 500 MB, so watch the *Database size* graph, and move
+photos to object storage if it keeps growing.
 
 ### Rules page
 Rules are grouped into categories (attendance timing, overtime and weekly-off work, deductions and absence, leave and salary
@@ -319,6 +327,6 @@ Every rule and toggle has an **i** button. It explains what the rule does and gi
   in the PDF, with the as-of date). Once the cycle is finalized, the final figures are shown instead.
 
 ### Photos and reports
-* Punch photos are compressed toward about 30 KB (was about 65 KB) before upload. Faces stay clear at the smallest step.
+* Punch photos are compressed to 50-100 KB before upload (see *Photo compression*).
 * Reports offer **Last 30 days** and **Last 90 days (text records)**, so the 90-day text data can be exported as
   Excel, CSV or PDF. Photos are not included.
