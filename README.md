@@ -143,7 +143,9 @@ Deploy to Vercel: add `DATABASE_URL`, `SUPER_ADMIN_*` as environment variables. 
   - a scrollable awareness message about fair attendance and avoiding unfair deductions;
   - four highlighted questions about the policies the company actually applies;
   - tick-box answers that stay locked until the message has been read to the end, plus a confirmation tick.
-  "Answer later" closes it for this visit only; it returns the next time the app opens while the third is still open.
+  The whole check-in is one page with one scroll (no nested scroll boxes). "Answer later" closes it for this visit only.
+  While the slot is unanswered it stays in **Notifications** ("Periodic check-in is waiting"); tapping it reopens the check-in,
+  and a load failure shows a message with **Try again** instead of failing silently.
   Answers are stored with the company, cycle and slot, but **no user id**, so they are anonymous at the record level.
   Each answer gets a leniency index from 0 (strict) to 100 (lenient), from the weights set in `src/lib/feedback.ts`.
 * **Platform analytics** (platform admin, **Analytics**; 3, 6 or 12 months): companies are shown only as anonymized labels.

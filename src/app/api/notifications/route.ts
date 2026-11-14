@@ -5,6 +5,8 @@ import { leaveRequests, noticePeriods, salarySlipRequests, users } from "@/db/sc
 import { getAuth } from "@/lib/auth";
 import { loadPublishedAgreements, statusOf, todayKeyOf } from "@/lib/agreement-gate";
 import { showsPopup } from "@/lib/agreements";
+import { currentFeedbackSlot } from "@/lib/feedback-server";
+import { adminFeedbackResponses } from "@/db/schema";
 import type { NotificationItem } from "@/lib/notifications";
 
 const LIST_LIMIT = 40;
@@ -144,6 +146,34 @@ export async function GET() {
         unread: s.decidedAt > seenAt,
         tone: approved ? "green" : "red",
         href: "/salary",
+      });
+    }
+  }
+
+  // ---- Admin: the periodic check-in, until it is answered for the current third of the cycle
+  if (ctx.user.role === "company_admin") {
+    const current = currentFeedbackSlot(ctx.settings, now);
+    const [answered] = await db
+      .select({ id: adminFeedbackResponses.id })
+      .from(adminFeedbackResponses)
+      .where(
+        and(
+          eq(adminFeedbackResponses.companyId, companyId),
+          eq(adminFeedbackResponses.cycleKey, current.cycleKey),
+          eq(adminFeedbackResponses.slot, current.slot)
+        )
+      )
+      .limit(1);
+    if (!answered) {
+      items.push({
+        id: `checkin:${current.cycleKey}:${current.slot}`,
+        kind: "action",
+        title: "Periodic check-in is waiting",
+        body: "About three minutes. Your answers are anonymous. Tap to open it.",
+        at: now.toISOString(),
+        unread: true,
+        tone: "indigo",
+        action: "open_checkin",
       });
     }
   }

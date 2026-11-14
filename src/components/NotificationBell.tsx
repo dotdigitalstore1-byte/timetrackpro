@@ -6,7 +6,7 @@ import { api } from "@/lib/client";
 import { cn } from "@/lib/utils";
 import { Modal, Spinner } from "@/components/ui";
 import AgreementCard, { type AgreementDto } from "@/components/AgreementCard";
-import { NOTIFICATIONS_CHANGED, type NotificationItem } from "@/lib/notifications";
+import { NOTIFICATIONS_CHANGED, OPEN_CHECKIN_EVENT, type NotificationItem } from "@/lib/notifications";
 
 const TONE_DOT: Record<NotificationItem["tone"], string> = {
   indigo: "bg-indigo-500",
@@ -149,7 +149,18 @@ export default function NotificationBell() {
                     const rowClass = "block w-full px-5 py-4 text-left hover:bg-slate-50";
                     return (
                       <li key={item.id}>
-                        {item.agreementId ? (
+                        {item.action === "open_checkin" ? (
+                          <button
+                            type="button"
+                            className={rowClass}
+                            onClick={() => {
+                              setOpen(false);
+                              window.dispatchEvent(new Event(OPEN_CHECKIN_EVENT));
+                            }}
+                          >
+                            {body}
+                          </button>
+                        ) : item.agreementId ? (
                           <button type="button" className={rowClass} onClick={() => void openAgreement(item.agreementId!)}>
                             {body}
                           </button>
