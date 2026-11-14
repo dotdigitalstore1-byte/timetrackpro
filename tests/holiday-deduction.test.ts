@@ -114,7 +114,7 @@ test("days outside the loaded records are unknown and never counted", () => {
 
 test("the cut is priced at one daily rate and included in total deductions", () => {
   const base = { basicSalary: 30000, workDaysPerMonth: 30, lateRule: { type: "fixed" as const, value: 0 }, halfDayRule: { type: "fixed" as const, value: 0 }, leaveRule: { type: "fixed" as const, value: 0 }, otherDeductions: [] };
-  const summary = { presentDays: 26, lateDays: 0, halfDays: 0, leaveDays: 0, absentDays: 0, unapprovedOccurrences: [] };
+  const summary = { presentDays: 26, lateDays: 0, halfDays: 0, leaveDays: 0, absentDays: 0, unapprovedOccurrences: [], unapprovedRunLengths: [], events: [] };
   const r = computeSalary({ ...base, summary, holidayDeductionDays: 1 });
   assert.equal(r.holidayDeductionDays, 1);
   assert.equal(r.holidayDeduction, 1000);

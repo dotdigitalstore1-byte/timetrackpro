@@ -29,3 +29,17 @@ export async function loadCompanyProfile(companyId: string): Promise<CompanyProf
     logoDataUrl: b?.logoDataUrl ?? null,
   };
 }
+
+/**
+ * A cache-busting stamp for the company logo (its last update, in ms), or null when there is no logo.
+ * The layout passes it to the app shell so the logo image URL changes whenever the logo does.
+ */
+export async function loadLogoVersion(companyId: string): Promise<number | null> {
+  const [b] = await db
+    .select({ logoDataUrl: companyBranding.logoDataUrl, updatedAt: companyBranding.updatedAt })
+    .from(companyBranding)
+    .where(eq(companyBranding.companyId, companyId))
+    .limit(1);
+  if (!b?.logoDataUrl) return null;
+  return b.updatedAt.getTime();
+}

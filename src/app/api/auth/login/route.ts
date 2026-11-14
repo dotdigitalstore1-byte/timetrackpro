@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { users } from "@/db/schema";
-import { createSession, setSessionCookie, verifyPassword } from "@/lib/auth";
+import { authenticateEnvSuperAdmin, createSession, setSessionCookie, verifyPassword } from "@/lib/auth";
 import { clearRateLimit, clientIp, isRateLimited } from "@/lib/rate-limit";
 
 // Constant-ish work for unknown emails so response timing does not reveal which accounts exist.
@@ -25,6 +25,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Too many sign-in attempts. Please wait 15 minutes and try again." }, { status: 429 });
     }
 
+    // The platform owner is authenticated from SUPER_ADMIN_EMAIL / SUPER_ADMIN_PASSWORD and the
+    // matching user row is created or refreshed automatically.
+    const superAdmin = await authenticateEnvSuperAdmin(email, password);
+    if (superAdmin) {
+      await clearRateLimit(emailKey);
+      const token = await createSession(superAdmin.id);
+      await setSessionCookie(token);
+      return NextResponse.json({ ok: true, role: "super_admin" });
+    }
+
     const rows = await db.select().from(users).where(eq(users.email, email)).limit(1);
     const user = rows[0];
     const ok = verifyPassword(password, user ? user.passwordHash : DUMMY_HASH);
@@ -33,6 +43,10 @@ export async function POST(req: Request) {
     }
     if (!user.isActive) {
       return NextResponse.json({ error: "This account has been deactivated." }, { status: 403 });
+    }
+    // Super admins are owned by the environment; a stored hash must never sign one in.
+    if (user.role === "super_admin") {
+      return NextResponse.json({ error: "Invalid email or password." }, { status: 401 });
     }
 
     await clearRateLimit(emailKey);

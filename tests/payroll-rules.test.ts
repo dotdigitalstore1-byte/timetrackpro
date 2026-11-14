@@ -160,7 +160,7 @@ test("overtime needs the minimum, is capped per day, and sums", () => {
 // --------------------------------------------------------------- salary maths
 const sum = (over = {}) => ({
   presentDays: 26, lateDays: 0, halfDays: 0, leaveDays: 0, absentDays: 0,
-  unapprovedOccurrences: [], earlyLeaveDays: 0, overtimeMinutes: 0, ...over,
+  unapprovedOccurrences: [], unapprovedRunLengths: [], earlyLeaveDays: 0, overtimeMinutes: 0, events: [], ...over,
 });
 const base = {
   basicSalary: 26000, workDaysPerMonth: 26,

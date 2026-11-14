@@ -16,7 +16,7 @@ const base = {
 };
 const sum = (over: Record<string, unknown> = {}) => ({
   presentDays: 22, lateDays: 0, halfDays: 0, leaveDays: 0, absentDays: 0,
-  unapprovedOccurrences: [], earlyLeaveDays: 0, overtimeMinutes: 0, ...over,
+  unapprovedOccurrences: [], unapprovedRunLengths: [], earlyLeaveDays: 0, overtimeMinutes: 0, events: [], ...over,
 });
 
 test("standard month is 30 days: daily rate is basic / 30 for every calendar length", () => {

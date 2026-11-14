@@ -59,6 +59,8 @@ export const users = pgTable("users", {
   managerPermissions: jsonb("manager_permissions").$type<string[]>().notNull().default([]),
   phone: varchar("phone", { length: 50 }),
   isActive: boolean("is_active").notNull().default(true),
+  // When the notification centre was last opened. Items newer than this are unread.
+  notificationsSeenAt: timestamp("notifications_seen_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -137,6 +139,12 @@ export const companySettings = pgTable("company_settings", {
 
   // ---- Leave accrual: 1 leave per month. "carry" = balance accumulates; "lapse" = a month's leave must be used that month
   leaveAccrualMode: varchar("leave_accrual_mode", { length: 10 }).notNull().default("carry"),
+
+  // ---- Notice period policy (see src/lib/notice.ts). The admin sets the real days per notice when approving.
+  noticeEnabled: boolean("notice_enabled").notNull().default(true),
+  noticeDefaultDays: integer("notice_default_days").notNull().default(30), // standard notice: 30 days
+  noticeMaxDays: integer("notice_max_days").notNull().default(90), // longest notice the admin may set
+  noticeAllowEarlyRelease: boolean("notice_allow_early_release").notNull().default(true), // admin may shorten a notice
 
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -497,6 +505,89 @@ export const companyBranding = pgTable("company_branding", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Company agreements and rules. Pushed to employees as a full-screen pop-up that must be accepted before punching in.
+// Every edit to a published agreement bumps `version`, which asks everyone again.
+export const companyAgreements = pgTable(
+  "company_agreements",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    title: varchar("title", { length: 200 }).notNull(),
+    body: text("body").notNull(),
+    status: varchar("status", { length: 20 }).notNull().default("draft"), // draft | published
+    version: integer("version").notNull().default(1),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    createdBy: uuid("created_by").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("company_agreements_company_idx").on(t.companyId)]
+);
+
+// An employee's answer to an agreement version. `workDate` is the company-local day it counts for.
+// `permanent` is set by "Don't show again".
+export const agreementAcknowledgements = pgTable(
+  "agreement_acknowledgements",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    agreementId: uuid("agreement_id")
+      .notNull()
+      .references(() => companyAgreements.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    response: varchar("response", { length: 20 }).notNull(), // accepted | declined
+    workDate: timestamp("work_date", { withTimezone: true }).notNull(), // company-local date, stored as UTC midnight
+    permanent: boolean("permanent").notNull().default(false),
+    respondedAt: timestamp("responded_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("agreement_ack_uq").on(t.agreementId, t.userId, t.version, t.workDate),
+    index("agreement_ack_company_idx").on(t.companyId),
+  ]
+);
+
+// Notice periods. An employee requests one (with a resignation confirmation and a typed signature), or an admin
+// places an employee on notice directly. The admin approves a request and sets the exact number of days.
+export const noticePeriods = pgTable(
+  "notice_periods",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    employeeId: uuid("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    status: varchar("status", { length: 20 }).notNull().default("requested"), // requested | active | rejected | cancelled | completed
+    source: varchar("source", { length: 20 }).notNull().default("employee"), // employee | admin
+    reason: text("reason"),
+    resignationConfirmed: boolean("resignation_confirmed").notNull().default(false),
+    signedName: varchar("signed_name", { length: 200 }),
+    signedAt: timestamp("signed_at", { withTimezone: true }),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+    startDate: timestamp("start_date", { withTimezone: true }), // first day of notice, company-local date
+    noticeDays: integer("notice_days"),
+    lastWorkingDay: timestamp("last_working_day", { withTimezone: true }), // company-local date
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    decidedBy: uuid("decided_by").references(() => users.id),
+    decisionNote: text("decision_note"),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("notice_periods_company_status_idx").on(t.companyId, t.status),
+    index("notice_periods_employee_idx").on(t.employeeId),
+  ]
+);
+
 export const auditLogs = pgTable("audit_logs", {
   id: uuid("id").primaryKey().defaultRandom(),
   companyId: uuid("company_id").references(() => companies.id, { onDelete: "cascade" }),
@@ -530,3 +621,6 @@ export type SalarySlipRequest = typeof salarySlipRequests.$inferSelect;
 export type Geofence = typeof geofences.$inferSelect;
 export type Department = typeof departments.$inferSelect;
 export type CompanyHoliday = typeof companyHolidays.$inferSelect;
+export type CompanyAgreement = typeof companyAgreements.$inferSelect;
+export type AgreementAcknowledgement = typeof agreementAcknowledgements.$inferSelect;
+export type NoticePeriod = typeof noticePeriods.$inferSelect;

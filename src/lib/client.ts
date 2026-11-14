@@ -18,6 +18,8 @@ export interface AccessData {
 }
 
 export interface MeData {
+  /** Last-update stamp of the company logo, or null when there is none. */
+  logoVersion: number | null;
   access: AccessData;
   user: {
     id: string;

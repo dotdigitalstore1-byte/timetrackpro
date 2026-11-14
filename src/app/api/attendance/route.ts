@@ -25,6 +25,7 @@ import {
 } from "@/lib/payroll";
 import { haversineMeters } from "@/lib/utils";
 import { verifyChallenge } from "@/lib/capture-token";
+import { punchBlockMessage } from "@/lib/agreement-gate";
 
 /**
  * Largest accepted photo (characters of the data URL). A 100 KB JPEG is about 133,400 base64 characters, so this
@@ -337,6 +338,9 @@ export async function POST(req: Request) {
 
   if (type === "in") {
     if (existing?.punchInTime) return duplicate(existing, existing.status);
+    // A company agreement that must be accepted (or was declined today) blocks punching in.
+    const blocked = await punchBlockMessage(companyId, ctx.user.id, tz, now);
+    if (blocked) return NextResponse.json({ error: blocked, code: "agreement_required" }, { status: 403 });
     const status = computeStatus(now, policyFor(ctx.settings, ctx.employee));
     const values = {
       punchInTime: now,

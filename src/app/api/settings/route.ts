@@ -141,6 +141,11 @@ export async function POST(req: Request) {
     // ---- Weekly-off work & comp-off
     if (s.leaveAccrualMode !== undefined) update.leaveAccrualMode = s.leaveAccrualMode === "lapse" ? "lapse" : "carry";
     if (typeof s.extraPayEnabled === "boolean") update.extraPayEnabled = s.extraPayEnabled;
+    // ---- Notice period policy
+    if (typeof s.noticeEnabled === "boolean") update.noticeEnabled = s.noticeEnabled;
+    if (s.noticeDefaultDays !== undefined) update.noticeDefaultDays = clampInt(s.noticeDefaultDays, 1, 365, 30);
+    if (s.noticeMaxDays !== undefined) update.noticeMaxDays = clampInt(s.noticeMaxDays, 1, 365, 90);
+    if (typeof s.noticeAllowEarlyRelease === "boolean") update.noticeAllowEarlyRelease = s.noticeAllowEarlyRelease;
     if (s.extraPayRate !== undefined) update.extraPayRate = String(clampNum(s.extraPayRate, 0, 5, 1));
 
     const hhmm = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -163,6 +168,9 @@ export async function POST(req: Request) {
       if (merged[typeKey] === "percentage" && mNum(valueKey) > 100) {
         return NextResponse.json({ error: `${label} cannot be more than 100%.` }, { status: 400 });
       }
+    }
+    if (mNum("noticeDefaultDays") > mNum("noticeMaxDays")) {
+      return NextResponse.json({ error: "The standard notice cannot be longer than the maximum notice." }, { status: 400 });
     }
     if (mNum("earlyLeaveHalfDayMinutes") > 0 && mNum("earlyLeaveHalfDayMinutes") < mNum("earlyLeaveGraceMinutes")) {
       return NextResponse.json({ error: "The early-leave half-day limit must be longer than the early-leave cool-off time." }, { status: 400 });

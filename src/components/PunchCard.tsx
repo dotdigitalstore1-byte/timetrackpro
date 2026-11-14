@@ -5,6 +5,7 @@ import { api, ApiError, getCurrentPosition, withRetry } from "@/lib/client";
 import { Badge, Button, Card } from "@/components/ui";
 import CameraCapture from "@/components/CameraCapture";
 import { formatTime, toDateKey, workingHours } from "@/lib/utils";
+import { AGREEMENTS_CHANGED } from "@/lib/notifications";
 
 interface AttendanceRow {
   id: string;
@@ -88,6 +89,8 @@ export default function PunchCard({ onChanged }: { onChanged?: () => void }) {
     } catch (e) {
       const busy = e instanceof ApiError && (e.status === 0 || e.status >= 500);
       setError(busy ? "The server is busy right now. Your punch was not recorded. Please try again in a moment." : e instanceof Error ? e.message : "Punch failed");
+      // A punch-in can be blocked by a company agreement: ask the pop-up to re-check and open it if needed.
+      if (type === "in") window.dispatchEvent(new Event(AGREEMENTS_CHANGED));
     } finally {
       setPunching(false);
     }

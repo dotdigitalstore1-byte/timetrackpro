@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, useMe } from "@/lib/client";
 import { Badge, Button, Card, Input, PageHeader, Spinner } from "@/components/ui";
+import LogoEditor from "@/components/LogoEditor";
 
 const ROLE_LABEL: Record<string, string> = {
   super_admin: "Platform Super Admin",
@@ -87,6 +88,12 @@ export default function ProfilePage() {
   return (
     <div>
       <PageHeader title="Profile" subtitle="Your account details and security" />
+
+      {me.user.role === "company_admin" && (
+        <div className="mb-4">
+          <LogoEditor version={me.logoVersion} />
+        </div>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-1">

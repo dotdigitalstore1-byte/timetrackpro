@@ -3,6 +3,7 @@ import { getAuth } from "@/lib/auth";
 import { shiftOf } from "@/lib/company";
 import { loadEmployeeOrg } from "@/lib/org";
 import { loadAccess, MANAGER_PERMISSIONS } from "@/lib/access";
+import { loadLogoVersion } from "@/lib/company-profile";
 
 export async function GET() {
   const ctx = await getAuth();
@@ -10,11 +11,13 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const { user, company, settings, employee } = ctx;
-  const [org, access] = await Promise.all([
+  const [org, access, logoVersion] = await Promise.all([
     employee ? loadEmployeeOrg([employee.id]).then((m) => m.get(employee.id)) : Promise.resolve(undefined),
     loadAccess(ctx),
+    company ? loadLogoVersion(company.id) : Promise.resolve(null),
   ]);
   return NextResponse.json({
+    logoVersion,
     user: {
       id: user.id,
       email: user.email,

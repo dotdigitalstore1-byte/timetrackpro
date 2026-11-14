@@ -33,19 +33,19 @@ a mobile app (Android/desktop install) and a responsive web app.
 
 ```bash
 npm install
-cp .env.example .env          # set DATABASE_URL + super-admin values
+cp .env.example .env          # set DATABASE_URL + SUPER_ADMIN_EMAIL / SUPER_ADMIN_PASSWORD
 npm run db:push               # create/update tables (or: db:generate && db:migrate)
+# existing databases: run migrations/2026-11-agreements-notice-notifications.sql once (idempotent)
 npm run db:backfill           # ONE TIME, only if you already had employees: turns the old free-text
                               # "department" values into real departments and links them
-npm run seed                  # create/refresh the platform Super Admin from .env
 npm test                      # payroll + timezone unit tests
 npm run dev
 ```
 
-`.env.local` takes precedence over `.env` in both Next.js and the seed script, so keep the
-`SUPER_ADMIN_*` values in sync. Re-running `npm run seed` resets the configured super-admin password.
-
-The HTTP bootstrap remains available: `POST /api/auth/seed` with `{"key":"<SUPER_ADMIN_SEED_KEY>"}`.
+The platform owner signs in with `SUPER_ADMIN_EMAIL` / `SUPER_ADMIN_PASSWORD` from `.env.local`
+(which takes precedence over `.env`). The owner's account row is created or refreshed automatically on
+the next successful login, so changing either value applies immediately — no seed command, bootstrap
+endpoint, or manual database update is needed.
 
 Deploy to Vercel: add `DATABASE_URL`, `SUPER_ADMIN_*` as environment variables. Any hosted Postgres works
 (Neon, Supabase Postgres, RDS…). Companies self-register at `/register`.
@@ -109,6 +109,29 @@ Deploy to Vercel: add `DATABASE_URL`, `SUPER_ADMIN_*` as environment variables. 
 * A month can be finalized only after it ends. Finalized/paid months are frozen; history never changes.
 * Weekly offs and company holidays are never counted as absences. "Today" and shift times use the company timezone.
 
+## Company logo, agreements, notice period & notifications
+
+* **Company logo** (company admin, **Profile** or **Settings**): upload any picture, then crop it. Drag to position,
+  zoom, choose square or round. It is shrunk automatically to a small logo (about 150 KB) and shown in the app header
+  for everyone in the company and at the top of salary slips. Served from `/api/company/logo` and cached by version.
+* **Company agreements** (company admin, **Agreements**): write a rule or agreement and **push** it. Employees see it as a
+  full-screen pop-up the next time they open the app and must answer it to punch in.
+  - **Accept** counts for today only, so the pop-up returns on the next open.
+  - **Accept with "Don't show again"** is permanent for that version and the pop-up stops.
+  - **Decline** blocks punching in for the rest of that day. They are asked again the next day.
+  - Editing a live agreement pushes a new version, which asks everyone again. Withdraw stops it. Delete is for drafts.
+  - Punch-in is refused on the server while an agreement is unanswered or declined today.
+* **Notice period** (company admin, **Notice period**; employees, **More → Notice period**):
+  - Policy: standard notice (default 30 days), maximum (90), early release on or off, and the module on or off.
+  - An employee requests a notice by confirming they sent a formal resignation email, optionally giving a reason, and
+    **signing** by typing their full name exactly as on their account. The signature is recorded with the time.
+  - The admin approves and sets the exact number of days and the first day. The last working day is calculated.
+    Admins can also place an employee on notice directly, mark a notice completed, or cancel it. Everything is audit-logged.
+  - Notice days are calendar days. Salary during notice follows the existing salary-hold rule under **Rules**.
+* **Notifications** (bell at the top corner: the mobile header, or the sidebar on desktop): agreements, the outcome of your
+  own notice, leave and salary-slip requests, and (for admins) requests waiting for a decision. Items are unread until
+  you open the centre. This is an in-app feed. It does not send device push notifications.
+
 ## Operational notes
 
 * Attendance, Photo audit and the dashboard use the **salary cycle** (see *Rules → Salary cycle*), not the calendar month.
@@ -134,7 +157,7 @@ Deploy to Vercel: add `DATABASE_URL`, `SUPER_ADMIN_*` as environment variables. 
   pooler", Neon pooled URL) in `DATABASE_URL`, and keep `DB_POOL_MAX` small. Also set `CRON_SECRET` (see Photo retention above).
 * Never commit `.env` / `.env.local` (they are in `.gitignore`); `.env.example` must only contain placeholders.
 * Still to add for a native app store build: subscription-expiry enforcement/billing, an offline punch queue,
-  and a native wrapper (Capacitor/React Native) that reuses these APIs. The PWA already installs standalone on
+  device push notifications (the bell is in-app only), and a native wrapper (Capacitor/React Native) that reuses these APIs. The PWA already installs standalone on
   Android/desktop and includes an offline fallback page.
 
 

@@ -28,8 +28,12 @@ test("weekly off + workdays", () => {
   assert.equal(monthWorkdays(2026, 10, parseWeeklyOff("0")).length, 27);
 });
 
-function mkSummary(over: Partial<ReturnType<typeof summarizeMonth>> = {}) {
-  return { presentDays: 0, lateDays: 0, halfDays: 0, leaveDays: 0, absentDays: 0, unapprovedOccurrences: [], ...over };
+function mkSummary(over: Partial<ReturnType<typeof summarizeMonth>> = {}): ReturnType<typeof summarizeMonth> {
+  return {
+    presentDays: 0, lateDays: 0, halfDays: 0, leaveDays: 0, absentDays: 0,
+    unapprovedOccurrences: [], unapprovedRunLengths: [], events: [],
+    ...over,
+  } as ReturnType<typeof summarizeMonth>;
 }
 const baseSalary = {
   basicSalary: 26000, workDaysPerMonth: 26,

@@ -10,6 +10,7 @@ import {
   users,
 } from "@/db/schema";
 import type { Company, CompanySettings, Employee, User } from "@/db/schema";
+import { matchesSuperAdminCredentials, readSuperAdminEnv } from "@/lib/super-admin";
 
 const SESSION_COOKIE = "att_session";
 const SESSION_DAYS = 30;
@@ -26,6 +27,51 @@ export function verifyPassword(password: string, stored: string): boolean {
   const candidate = scryptSync(password, salt, 64);
   const expected = Buffer.from(hash, "hex");
   return candidate.length === expected.length && timingSafeEqual(candidate, expected);
+}
+
+/**
+ * Authenticates the platform owner against SUPER_ADMIN_EMAIL / SUPER_ADMIN_PASSWORD.
+ * The owner's user row is created or refreshed on demand, so changing the env values takes effect
+ * on the next sign-in with no seed step or manual database update.
+ */
+export async function authenticateEnvSuperAdmin(email: string, password: string): Promise<User | null> {
+  const admin = readSuperAdminEnv();
+  if (!admin || !matchesSuperAdminCredentials(email, password)) return null;
+
+  const existing = await db.select().from(users).where(eq(users.email, admin.email)).limit(1);
+  const row = existing[0];
+
+  // Already consistent with the current env values: no write needed.
+  if (
+    row &&
+    row.role === "super_admin" &&
+    row.isActive &&
+    row.companyId === null &&
+    verifyPassword(admin.password, row.passwordHash)
+  ) {
+    return row;
+  }
+
+  const values = {
+    passwordHash: hashPassword(admin.password),
+    fullName: "Super Admin",
+    role: "super_admin" as const,
+    companyId: null,
+    isActive: true,
+  };
+
+  if (row) {
+    const updated = await db.update(users).set(values).where(eq(users.id, row.id)).returning();
+    // The account's credentials/role changed from the environment: drop sessions issued under the old state.
+    await db.delete(sessions).where(eq(sessions.userId, row.id));
+    return updated[0] ?? null;
+  }
+
+  const inserted = await db
+    .insert(users)
+    .values({ email: admin.email, ...values })
+    .returning();
+  return inserted[0] ?? null;
 }
 
 export async function createSession(userId: string): Promise<string> {
@@ -78,6 +124,13 @@ export async function getAuth(): Promise<AuthContext | null> {
   if (!row) return null;
   const { user, company, settings, employee } = row;
   if (!user.isActive) return null;
+
+  // The platform owner is defined by the environment. If SUPER_ADMIN_EMAIL changes, sessions for
+  // the previous owner email stop being valid on their next request.
+  if (user.role === "super_admin") {
+    const owner = readSuperAdminEnv();
+    if (!owner || user.email.trim().toLowerCase() !== owner.email) return null;
+  }
 
   if (!user.companyId) return { user, company: null, settings: null, employee: null, sessionToken: token };
 

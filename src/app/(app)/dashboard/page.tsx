@@ -213,9 +213,12 @@ function EmployeeDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [clock, setClock] = useState(() => new Date());
+  const [notice, setNotice] = useState<{ status: string; phase: string | null; daysLeft: number | null; lastWorkingDay: string | null; noticeDays: number | null } | null>(null);
 
   const load = useCallback(async () => {
     setError("");
+    // The notice banner is optional: a failure here must not break the dashboard.
+    api<{ current: typeof notice }>("/api/notice").then((n) => setNotice(n.current ?? null)).catch(() => setNotice(null));
     try {
       const [att, lv, sal] = await Promise.all([
         api<{
@@ -367,6 +370,16 @@ function EmployeeDashboard() {
               </div>
             </div>
           </Card>
+
+          {notice?.status === "active" && notice.phase !== "ended" && (
+            <Card className="border-indigo-200 bg-indigo-50/60 p-5">
+              <p className="text-xs font-bold uppercase tracking-wide text-indigo-600">Serving notice</p>
+              <p className="mt-1 text-sm font-semibold text-slate-900">
+                {notice.phase === "upcoming" ? "Your notice period starts soon." : `${notice.daysLeft ?? 0} day${notice.daysLeft === 1 ? "" : "s"} left in your notice period.`}
+              </p>
+              <p className="mt-0.5 text-xs text-slate-600">Last working day: {formatDayKey(notice.lastWorkingDay)}. Keep punching in and out as usual.</p>
+            </Card>
+          )}
 
           <PunchCard onChanged={load} />
 
