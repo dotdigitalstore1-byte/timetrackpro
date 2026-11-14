@@ -132,6 +132,27 @@ Deploy to Vercel: add `DATABASE_URL`, `SUPER_ADMIN_*` as environment variables. 
   own notice, leave and salary-slip requests, and (for admins) requests waiting for a decision. Items are unread until
   you open the centre. This is an in-app feed. It does not send device push notifications.
 
+## Platform administration, admin check-ins & analytics
+
+* **Company management** (platform admin, **Companies**): every company with plan, status, employees and subscription.
+  **Manage → Danger zone** deletes a company permanently. You must type the company's exact name. Deletion removes all of
+  its data (employees, attendance, salary, leave, notices, agreements, feedback, logo). A record of the deletion (name,
+  headcount, plan, date) is kept in `platform_events`, which survives the company's removal.
+* **Periodic company-admin check-in** (company admin): about three times per payroll cycle, once for each third of the cycle
+  (the cycle follows *Salary cycle start day* in Rules). It opens full-screen:
+  - a scrollable awareness message about fair attendance and avoiding unfair deductions;
+  - four highlighted questions about the policies the company actually applies;
+  - tick-box answers that stay locked until the message has been read to the end, plus a confirmation tick.
+  "Answer later" closes it for this visit only; it returns the next time the app opens while the third is still open.
+  Answers are stored with the company, cycle and slot, but **no user id**, so they are anonymous at the record level.
+  Each answer gets a leniency index from 0 (strict) to 100 (lenient), from the weights set in `src/lib/feedback.ts`.
+* **Platform analytics** (platform admin, **Analytics**; 3, 6 or 12 months): companies are shown only as anonymized labels.
+  It compares leniency with team stability (share of headcount that started notice), on-time rate, punch coverage and
+  feedback engagement. Correlations need at least 5 companies, and group averages need at least 3. They describe
+  association, not cause.
+
+Apply `migrations/2026-11-admin-feedback-platform-analytics.sql` once (idempotent).
+
 ## Operational notes
 
 * Attendance, Photo audit and the dashboard use the **salary cycle** (see *Rules → Salary cycle*), not the calendar month.

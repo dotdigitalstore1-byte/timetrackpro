@@ -34,6 +34,10 @@ export default function SuperAdminPage() {
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [search, setSearch] = useState("");
+  const [deleteName, setDeleteName] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const [notice, setNotice] = useState("");
 
   const [form, setForm] = useState({ name: "", email: "", password: "", plan: "basic" });
 
@@ -76,6 +80,31 @@ export default function SuperAdminPage() {
     await load();
   };
 
+  const closeManage = () => {
+    setEditCompany(null);
+    setDeleteName("");
+    setDeleteError("");
+  };
+
+  /** Permanently removes a company and everything that belongs to it. The server re-checks the typed name. */
+  const deleteCompany = async (company: CompanyRow) => {
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      await api("/api/superadmin", {
+        method: "POST",
+        body: JSON.stringify({ action: "deleteCompany", companyId: company.id, confirmName: deleteName }),
+      });
+      setNotice(`${company.name} and all of its data were deleted. The deletion is recorded in the platform log.`);
+      closeManage();
+      await load();
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : "Could not delete the company");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return companies;
@@ -91,6 +120,13 @@ export default function SuperAdminPage() {
         subtitle="Manage all companies, subscriptions and platform health"
         action={<Button size="sm" onClick={() => setCreateOpen(true)}>+ Create Company</Button>}
       />
+
+      {notice && (
+        <div className="mb-4 flex items-start justify-between gap-3 rounded-xl bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">
+          <span>{notice}</span>
+          <button type="button" onClick={() => setNotice("")} className="text-emerald-700 hover:underline">Dismiss</button>
+        </div>
+      )}
 
       {loading && !stats ? (
         <div className="flex justify-center py-16"><Spinner /></div>
@@ -223,7 +259,7 @@ export default function SuperAdminPage() {
       </Modal>
 
       {editCompany && (
-        <Modal open onClose={() => setEditCompany(null)} title={`Manage ${editCompany.name}`}>
+        <Modal open onClose={closeManage} title={`Manage ${editCompany.name}`}>
           <div className="space-y-4">
             <Select
               label="Status"
@@ -252,6 +288,28 @@ export default function SuperAdminPage() {
             >
               Save Changes
             </Button>
+
+            <div className="rounded-xl border border-rose-200 bg-rose-50/60 p-4">
+              <p className="text-sm font-bold text-rose-800">Danger zone</p>
+              <p className="mt-1 text-xs leading-relaxed text-rose-700">
+                Deleting removes this company with all of its employees, attendance, salary records, leave, agreements and feedback.
+                This cannot be undone. To confirm, type the company name exactly:{" "}
+                <span className="font-bold">{editCompany.name}</span>
+              </p>
+              <div className="mt-3">
+                <Input value={deleteName} onChange={setDeleteName} placeholder={editCompany.name} />
+              </div>
+              {deleteError && <p className="mt-2 rounded-lg bg-white px-3 py-2 text-xs font-medium text-rose-700">{deleteError}</p>}
+              <Button
+                variant="danger"
+                className="mt-3 w-full"
+                disabled={deleteName.trim() !== editCompany.name || deleting}
+                loading={deleting}
+                onClick={() => deleteCompany(editCompany)}
+              >
+                Delete company permanently
+              </Button>
+            </div>
           </div>
         </Modal>
       )}

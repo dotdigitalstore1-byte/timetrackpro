@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { and, count, desc, eq, gte, lt } from "drizzle-orm";
 import { db } from "@/db";
-import { attendance, companies, companySettings, employees, subscriptions, users } from "@/db/schema";
+import { attendance, companies, companySettings, employees, platformEvents, subscriptions, users } from "@/db/schema";
 import { getAuth, hashPassword } from "@/lib/auth";
 
 export async function GET() {
@@ -90,6 +90,42 @@ export async function POST(req: Request) {
       }
     }
     return NextResponse.json({ ok: true });
+  }
+
+  if (action === "deleteCompany") {
+    // Permanently removes the company and everything that belongs to it (employees, attendance, salary, leave,
+    // agreements, feedback, logos). A typed confirmation of the exact company name is required.
+    const companyId = String(body.companyId || "");
+    const confirmName = String(body.confirmName || "").trim();
+    if (!/^[0-9a-f-]{36}$/i.test(companyId)) return NextResponse.json({ error: "Company not found." }, { status: 404 });
+    const [company] = await db.select().from(companies).where(eq(companies.id, companyId)).limit(1);
+    if (!company) return NextResponse.json({ error: "Company not found." }, { status: 404 });
+    if (confirmName !== company.name) {
+      return NextResponse.json({ error: `Type the company name exactly ("${company.name}") to confirm the deletion.` }, { status: 400 });
+    }
+
+    const [headcount] = await db
+      .select({ n: count(employees.id) })
+      .from(employees)
+      .where(eq(employees.companyId, companyId));
+
+    // Logged first, in the same transaction. platform_events has no foreign key to companies, so it survives.
+    await db.transaction(async (tx) => {
+      await tx.insert(platformEvents).values({
+        action: "company.deleted",
+        actorId: ctx.user.id,
+        companyId,
+        companyName: company.name,
+        details: {
+          employeeCount: Number(headcount?.n ?? 0),
+          subscriptionPlan: company.subscriptionPlan,
+          status: company.status,
+          createdAt: company.createdAt.toISOString(),
+        },
+      });
+      await tx.delete(companies).where(eq(companies.id, companyId));
+    });
+    return NextResponse.json({ ok: true, deleted: company.name });
   }
 
   if (action === "createCompany") {

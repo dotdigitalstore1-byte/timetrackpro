@@ -588,6 +588,44 @@ export const noticePeriods = pgTable(
   ]
 );
 
+// Periodic admin feedback. Stored per company, cycle and slot. There is NO user id on purpose: the answers are
+// anonymous at the record level, and only the company is linked so that analytics can compare companies.
+export const adminFeedbackResponses = pgTable(
+  "admin_feedback_responses",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    cycleKey: varchar("cycle_key", { length: 7 }).notNull(), // YYYY-MM of the payroll cycle
+    slot: integer("slot").notNull(), // 0 early, 1 middle, 2 end of the cycle
+    questionnaireVersion: integer("questionnaire_version").notNull().default(1),
+    answers: jsonb("answers").$type<Record<string, string[]>>().notNull(),
+    leniencyIndex: integer("leniency_index").notNull(), // 0-100, snapshot at submission
+    scrolledToEnd: boolean("scrolled_to_end").notNull().default(false), // the awareness message was read in full
+    respondedAt: timestamp("responded_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("admin_feedback_slot_uq").on(t.companyId, t.cycleKey, t.slot),
+    index("admin_feedback_responded_idx").on(t.respondedAt),
+  ]
+);
+
+// Platform-level log. Not tied to a company row, so it survives when a company is deleted.
+export const platformEvents = pgTable(
+  "platform_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    action: varchar("action", { length: 60 }).notNull(),
+    actorId: uuid("actor_id").references(() => users.id),
+    companyId: uuid("company_id"), // no foreign key on purpose: the company may be gone
+    companyName: varchar("company_name", { length: 200 }),
+    details: jsonb("details").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("platform_events_created_idx").on(t.createdAt)]
+);
+
 export const auditLogs = pgTable("audit_logs", {
   id: uuid("id").primaryKey().defaultRandom(),
   companyId: uuid("company_id").references(() => companies.id, { onDelete: "cascade" }),
@@ -624,3 +662,4 @@ export type CompanyHoliday = typeof companyHolidays.$inferSelect;
 export type CompanyAgreement = typeof companyAgreements.$inferSelect;
 export type AgreementAcknowledgement = typeof agreementAcknowledgements.$inferSelect;
 export type NoticePeriod = typeof noticePeriods.$inferSelect;
+export type AdminFeedbackResponse = typeof adminFeedbackResponses.$inferSelect;
