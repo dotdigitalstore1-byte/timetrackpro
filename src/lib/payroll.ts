@@ -238,6 +238,8 @@ export interface DayRecord {
   overtimeMinutes?: number; // raw minutes worked after shift end (recorded at punch-out)
   punchInMinutes?: number | null; // company-clock minutes since midnight of the punch-in (for the deduction log)
   punchOutMinutes?: number | null;
+  id?: string; // attendance row id (for the admin's excuse action)
+  excused?: boolean; // a late mark the admin excused: counts as a full day, no late deduction
 }
 
 /** Why a day counted as a half day. */
@@ -260,6 +262,9 @@ export interface DayEvent {
   punchInMinutes: number | null;
   punchOutMinutes: number | null;
   earlyLeaveMinutes: number;
+  provisional?: boolean; // today: the deduction can still change until the day ends
+  excusedLate?: boolean; // a late mark the admin excused
+  attendanceId?: string | null;
 }
 
 export interface MonthSummary {
@@ -299,6 +304,8 @@ export function summarizeMonth(args: {
   approvedLeaves: { start: Date; end: Date }[];
   todayLocal: Date; // UTC midnight of today's local date
   joinDate?: Date | null; // UTC midnight; days before are ignored
+  // Live: today's clock and the minute-of-day after which a day with no punch counts as an absence (null = unknown).
+  live?: { nowMinutes: number; absentAfterMinutes: number | null };
 }): MonthSummary {
   const out: MonthSummary = {
     presentDays: 0,
@@ -322,6 +329,8 @@ export function summarizeMonth(args: {
     out.events.push({
       date: day,
       offDay: isOff(day),
+      provisional: day.getTime() === args.todayLocal.getTime(),
+      attendanceId: rec?.id ?? null,
       lateDay: false,
       halfDay: false,
       earlyLeave: false,
@@ -353,11 +362,12 @@ export function summarizeMonth(args: {
         out.halfDays += 1;
         note(day, rec, { halfDay: true, halfDayCause: rec.status === "half_day" ? "cutoff" : "left_early" });
       } else {
+        const excusedLate = rec.status === "late" && !!rec.excused;
         out.presentDays += 1;
-        if (rec.status === "late") out.lateDays += 1;
+        if (rec.status === "late" && !excusedLate) out.lateDays += 1;
         const isEarly = !!rules && early > rules.earlyLeaveGraceMinutes;
         if (isEarly) out.earlyLeaveDays = (out.earlyLeaveDays ?? 0) + 1;
-        if (rec.status === "late" || isEarly) note(day, rec, { lateDay: rec.status === "late", earlyLeave: isEarly });
+        if (rec.status === "late" || isEarly) note(day, rec, { lateDay: rec.status === "late" && !excusedLate, excusedLate, earlyLeave: isEarly });
       }
       const ot = rec.overtimeMinutes ?? 0;
       if (rules?.overtime && ot > 0 && ot >= rules.overtime.minMinutes) {
@@ -381,7 +391,12 @@ export function summarizeMonth(args: {
       note(day, rec, { leave: true });
       continue;
     }
-    if (day.getTime() >= args.todayLocal.getTime()) continue; // future / today: not absent yet
+    if (day.getTime() > args.todayLocal.getTime()) continue; // future: not counted
+    if (day.getTime() === args.todayLocal.getTime() && !rec?.hasPunchIn) {
+      // Today with no punch: absent only once the absence cut-off has passed. Before that it is pending.
+      const live = args.live;
+      if (!live || live.absentAfterMinutes === null || live.nowMinutes <= live.absentAfterMinutes) continue;
+    }
     out.absentDays += 1;
     note(day, rec, { absent: true, autoAbsent: !!rec?.hasPunchIn });
     if (!inBlock) {
@@ -645,6 +660,7 @@ export function holdDelayDaysOf(
 // ------------------------------------------------------------ deduction log
 
 export type DeductionKind =
+  | "excused"
   | "late"
   | "late_marks"
   | "early_leave"
@@ -664,6 +680,8 @@ export interface LedgerEntry {
   kind: DeductionKind;
   reason: string;
   amount: number;
+  provisional?: boolean; // today: still changing until the day ends
+  attendanceId?: string | null; // set on late lines, so an admin can excuse them
 }
 
 export interface LedgerInput {
@@ -754,6 +772,9 @@ export function buildDeductionLedger(i: LedgerInput): LedgerEntry[] {
         });
       }
     }
+    if (e.excusedLate) {
+      out.push({ date, kind: "excused", reason: "Late mark excused by admin: no deduction", amount: 0 });
+    }
     if (e.earlyLeave && i.earlyLeaveRule && unit(i.earlyLeaveRule) > 0) {
       out.push({
         date,
@@ -776,8 +797,17 @@ export function buildDeductionLedger(i: LedgerInput): LedgerEntry[] {
     out.push({ date: null, kind: "manual", reason: d.label, amount: Number(d.amount) || 0 });
   }
 
+  const byDate = new Map(events.map((e) => [dateKey(e.date), e]));
   return out
-    .map((x) => ({ ...x, amount: r2(x.amount) }))
+    .map((x) => {
+      const ev = x.date ? byDate.get(x.date) : undefined;
+      return {
+        ...x,
+        amount: r2(x.amount),
+        provisional: !!ev?.provisional,
+        attendanceId: x.kind === "late" || x.kind === "excused" ? ev?.attendanceId ?? null : null,
+      };
+    })
     .sort((a, b) => (a.date === null ? 1 : 0) - (b.date === null ? 1 : 0) || (a.date ?? "").localeCompare(b.date ?? ""));
 }
 

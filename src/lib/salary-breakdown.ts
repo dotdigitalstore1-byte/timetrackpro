@@ -1,4 +1,5 @@
 import type { SalaryComputation } from "@/lib/salary";
+import { allDeductionsTotal, ledgerTotal, unapprovedAbsenceDeduction } from "@/lib/deduction-totals";
 
 /**
  * The payslip figures for one employee and cycle. Shared by the salary page and salary slip downloads,
@@ -38,6 +39,10 @@ export function breakdownOf(c: SalaryComputation) {
     otherDeductions: c.otherDeductions,
     // permanent deductions only. The salary hold is a delay of the disbursement date, not a deduction.
     totalDeductions: r.totalDeductions,
+    // money taken for unapproved absences (reduces the attendance-based salary, so it is not in totalDeductions)
+    unapprovedAbsenceDeduction: unapprovedAbsenceDeduction(c.basicSalary, r.attendanceSalary),
+    // EVERY deduction: unapproved absences + permanent deductions. This is the figure the summary and the log show.
+    totalAllDeductions: allDeductionsTotal(unapprovedAbsenceDeduction(c.basicSalary, r.attendanceSalary), r.totalDeductions),
     // salary-hold delay in days (the disbursement date moves by this many days)
     salaryHoldDays: r.holdDays,
     // money held under the earlier rule (0 for every new calculation; kept so finalized history reads correctly)
@@ -46,6 +51,8 @@ export function breakdownOf(c: SalaryComputation) {
     netPayable: r.netPayable,
     // day-wise deduction log (null = not recorded for this finalized salary)
     ledger: c.ledger,
+    // sum of the log (null when there is no log). Should always equal totalAllDeductions.
+    ledgerTotal: c.ledger ? ledgerTotal(c.ledger) : null,
   };
 }
 

@@ -367,6 +367,11 @@ export const employeeLocations = pgTable(
 export const attendance = pgTable(
   "attendance",
   {
+    // Admin excuse for a late arrival: counts as a full day, with no late deduction. Reversible.
+    excused: boolean("excused").notNull().default(false),
+    excusedReason: text("excused_reason"),
+    excusedBy: uuid("excused_by"),
+    excusedAt: timestamp("excused_at", { withTimezone: true }),
   id: uuid("id").primaryKey().defaultRandom(),
   companyId: uuid("company_id")
     .notNull()

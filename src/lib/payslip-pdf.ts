@@ -1,4 +1,5 @@
 import { formatNumber } from "@/lib/utils";
+import { allDeductionsTotal, unapprovedAbsenceDeduction } from "@/lib/deduction-totals";
 
 /** The figures a payslip shows. Mirrors the breakdown returned by /api/salary and /api/salary/slips/[id]. */
 export interface SlipBreakdown {
@@ -124,14 +125,16 @@ export async function downloadPayslipPdf(slip: SlipPayload): Promise<void> {
 
   const earnings: string[][] = [];
   earnings.push(["Monthly basic salary", money(b.basicSalary)]);
-  const absentDeduction = Math.max(0, b.basicSalary - b.attendanceSalary);
-  if (absentDeduction > 0) earnings.push([`Unpaid absences (${b.absentDays} day(s))`, `- ${money(absentDeduction)}`]);
   if (b.overtimePay > 0) earnings.push([`Overtime (${formatNumber(b.overtimeMinutes / 60, 1)} h)`, `+ ${money(b.overtimePay)}`]);
   if (b.extraPay > 0) earnings.push(["Extra pay for unused comp-off", `+ ${money(b.extraPay)}`]);
   for (const a of b.additions) earnings.push([a.label, `+ ${money(a.amount)}`]);
-  const grossEarnings = b.attendanceSalary + b.overtimePay + b.extraPay + b.additionsTotal;
+  const grossEarnings = b.basicSalary + b.overtimePay + b.extraPay + b.additionsTotal;
 
+  // Unapproved absences are a deduction, the same as on the salary page, so the slip total matches the day-wise log.
+  const absenceDeduction = unapprovedAbsenceDeduction(b.basicSalary, b.attendanceSalary);
+  const allDeductions = allDeductionsTotal(absenceDeduction, b.totalDeductions);
   const deductions: string[][] = [];
+  if (absenceDeduction > 0) deductions.push([`Unapproved absence / no punch (${b.absentDays} day(s))`, `- ${money(absenceDeduction)}`]);
   if (b.lateDeduction > 0) deductions.push([`Late attendance (${b.lateDays} day(s))`, `- ${money(b.lateDeduction)}`]);
   if (b.earlyLeaveDeduction > 0) deductions.push([`Early leave (${b.earlyLeaveDays} day(s))`, `- ${money(b.earlyLeaveDeduction)}`]);
   if (b.halfDayDeduction > 0) deductions.push([`Half day(s) (${b.halfDays})`, `- ${money(b.halfDayDeduction)}`]);
@@ -151,7 +154,7 @@ export async function downloadPayslipPdf(slip: SlipPayload): Promise<void> {
     total("Total earnings", money(grossEarnings)),
     section("Deductions"),
     ...(deductions.length ? deductions : [["No deductions this cycle", "Rs. 0.00"]]),
-    total("Total deductions", `- ${money(b.totalDeductions)}`),
+    total("Total deductions", `- ${money(allDeductions)}`),
     ...(dayLines.length ? [section("Day-wise deductions (with unpaid absences)"), ...dayLines] : []),
     section("Summary"),
     ["Net after deductions", money(b.netBeforeHold)],

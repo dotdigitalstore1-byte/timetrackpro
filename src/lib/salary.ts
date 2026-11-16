@@ -13,6 +13,7 @@ import {
 import type { CompanySettings, Employee, SalaryHold, SalaryRecord } from "@/db/schema";
 import { holidayKeys, shiftOf, summaryRulesOf, weeklyOffOf } from "@/lib/company";
 import {
+  absentCutoffMinutes,
   addDays,
   buildDeductionLedger,
   computeSalary,
@@ -23,6 +24,7 @@ import {
   holidayDeductionBlocks,
   localParts,
   localWorkDate,
+  parseHHMM,
   salaryDateOf,
   SALARY_BASE_DAYS,
   shiftHours,
@@ -78,6 +80,8 @@ async function loadSettings(companyId: string): Promise<CompanySettings> {
 }
 
 type AttendanceRow = {
+  id: string;
+  excused: boolean;
   employeeId: string;
   workDate: Date;
   status: string;
@@ -141,6 +145,8 @@ export function computeFromData(
   const records = new Map<string, DayRecord>();
   for (const r of input.att) {
     records.set(dateKey(r.workDate), {
+      id: r.id,
+      excused: r.excused,
       status: r.status,
       hasPunchIn: !!r.punchInTime,
       hasPunchOut: !!r.punchOutTime,
@@ -156,10 +162,18 @@ export function computeFromData(
   const joinDate = localWorkDate(emp.hireDate, tz);
   const approvedLeaves = input.leaves.map((l) => ({ start: l.startDate, end: l.endDate }));
 
+  // Same-day deductions: today's unpunched day turns into an absence once the cut-off passes. With no cut-off set,
+  // that is the end of the shift.
+  const liveShift = shiftOf(settings, emp);
+  const absentAfterMinutes =
+    absentCutoffMinutes(liveShift.start, liveShift.end, settings.absentAfterPercentEnabled ? settings.absentAfterPercent : null) ??
+    parseHHMM(liveShift.end);
+
   const summary = summarizeMonth({
     year,
     month,
     period,
+    live: { nowMinutes: localParts(now, tz).minutes, absentAfterMinutes },
     rules: summaryRulesOf(settings),
     weeklyOff,
     holidays,
@@ -369,6 +383,8 @@ export async function computeMonth(
       .select({
         employeeId: attendance.employeeId,
         workDate: attendance.workDate,
+        id: attendance.id,
+        excused: attendance.excused,
         status: attendance.status,
         punchInTime: attendance.punchInTime,
         punchOutTime: attendance.punchOutTime,
@@ -459,6 +475,8 @@ export async function computeAllForMonth(
       .select({
         employeeId: attendance.employeeId,
         workDate: attendance.workDate,
+        id: attendance.id,
+        excused: attendance.excused,
         status: attendance.status,
         punchInTime: attendance.punchInTime,
         punchOutTime: attendance.punchOutTime,

@@ -483,3 +483,26 @@ The public page uses two-column cards on phones, and the pricing slider updates 
 page respects the phone's top and bottom safe areas (notch and home indicator). It has its own header and no bottom
 navigation bar, so the two bars cannot overlap.
 
+
+## Same-day deductions (live salary)
+
+Deductions are calculated from the attendance records each time the salary page loads, so they follow the day as it
+happens. The salary page refreshes every minute and when you return to the tab.
+
+| What happens | When the deduction appears |
+|---|---|
+| Late punch-in, after the grace period | At the punch, as a late deduction (and a late mark, if the late-marks rule applies) |
+| Punch-in past the half-day threshold | At the punch, as a half-day deduction |
+| No punch-in, and the absence cut-off has passed | At the moment of the cut-off, for today. With the absence cut-off switched off, at the end of the shift |
+| Today, before the cut-off | Not yet. Shown as pending, and the day is not counted |
+
+Today's lines carry a "Today · live" tag, and the Deductions heading shows what today has added so far.
+
+**Reversals.**
+- **Approved leave** on a missed day: the unapproved-absence deduction is removed at once. The day is then charged at the leave deduction rule in Settings, which is zero for paid leave.
+- **Excused late mark**: an admin clicks *Excuse* on the late line in the deduction log. The day counts as a full day present, with no late deduction and no late-mark penalty. *Undo* reverses it. Excusing and undoing are logged in the audit trail.
+- Both reversals apply to the live salary straight away. A pay cycle that is already finalized is frozen, so changes to it are refused.
+
+**Full days present (incl. late)** counts late arrivals as full days, so a late day is never lost from that counter.
+
+Excuses are limited to admins in the interface. Managers with the "manage attendance" power can also use the endpoint.

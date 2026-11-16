@@ -45,7 +45,10 @@ interface SalaryData {
     holidayDeductionDays: number;
     holidayDeduction: number;
     otherDeductions: { label: string; amount: number }[];
-    totalDeductions: number;
+    totalDeductions: number; // permanent deductions only (excludes unapproved absences)
+    unapprovedAbsenceDeduction: number; // money taken for unapproved absences
+    totalAllDeductions: number; // every deduction: absences + permanent. Matches the day-wise log.
+    ledgerTotal: number | null; // sum of the day-wise log (null when no log was recorded)
     salaryHoldDays: number;
     salaryHoldAmount: number;
     netBeforeHold: number;
@@ -115,6 +118,19 @@ export default function SalaryPage() {
     load();
   }, [load]);
 
+  // Deductions change as the day goes on (late marks, half days, unpunched days, excuses). Keep the page current.
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    const id = window.setInterval(refresh, 60_000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [load]);
+
   useEffect(() => {
     if (canPick && employees.length === 0) {
       api<{ employees: { id: string; fullName: string; employeeCode?: string | null }[] }>("/api/employees")
@@ -146,6 +162,8 @@ export default function SalaryPage() {
 
   const b = data?.breakdown;
   const canEdit = isAdmin && !!employeeId && data && !data.frozen;
+  // Gross pay before any deduction. Unapproved absences are shown under Deductions, not taken out here.
+  const grossEarnings = b ? Math.round((b.basicSalary + b.overtimePay + b.extraPay + b.additionsTotal) * 100) / 100 : 0;
 
   return (
     <div>
@@ -270,8 +288,6 @@ export default function SalaryPage() {
                 <Row label="Monthly basic salary" value={`${currency}${formatNumber(b.basicSalary)}`} />
                 <Row label="Daily rate (basic ÷ 30)" value={`${currency}${formatNumber(b.dailyRate)}`} />
                 <Row label="Full days present (incl. late)" value={`${formatNumber(b.presentDays, 0)}`} />
-                <Row label="Unpaid unapproved absences" value={`${formatNumber(b.absentDays, 0)} day(s)`} />
-                <Row label="Attendance-based salary" value={`${currency}${formatNumber(b.attendanceSalary)}`} bold />
                 {b.weekOffWorkedDays > 0 && (
                   <Row label="Weekly-off days worked (each earns 1 comp-off)" value={`${b.weekOffWorkedDays} day(s)`} />
                 )}
@@ -298,6 +314,9 @@ export default function SalaryPage() {
                     </span>
                   </div>
                 ))}
+                <div className="mt-2 border-t border-slate-200 pt-2">
+                  <Row label="Gross earnings" value={`${currency}${formatNumber(grossEarnings)}`} bold />
+                </div>
               </div>
               {canEdit && (
                 <div className="mt-3 grid grid-cols-1 items-end gap-2 rounded-xl bg-slate-50 p-3 sm:grid-cols-5">
@@ -309,8 +328,25 @@ export default function SalaryPage() {
                 </div>
               )}
 
-              <h3 className="mb-2 mt-5 font-bold text-slate-900">Deductions</h3>
+              {(() => {
+                const pending = Math.round((b.ledger ?? []).filter((l) => l.provisional).reduce((t, l) => t + l.amount, 0) * 100) / 100;
+                return (
+                  <div className="mb-2 mt-5 flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="font-bold text-slate-900">Deductions</h3>
+                    {pending > 0 && (
+                      <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-bold text-amber-800">
+                        Today so far: −{currency}{formatNumber(pending)} · updates live
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
               <div className="space-y-2 text-sm">
+                <Row
+                  label={`Unapproved absence / no punch (${formatNumber(b.absentDays, 0)} day(s))`}
+                  value={`-${currency}${formatNumber(b.unapprovedAbsenceDeduction)}`}
+                  negative
+                />
                 <Row label={`Late attendance (${b.lateDays} day(s), incl. late-marks rule)`} value={`-${currency}${formatNumber(b.lateDeduction)}`} negative />
                 {(b.earlyLeaveDays > 0 || b.earlyLeaveDeduction > 0) && (
                   <Row label={`Early leave (${b.earlyLeaveDays} day(s))`} value={`-${currency}${formatNumber(b.earlyLeaveDeduction)}`} negative />
@@ -331,7 +367,9 @@ export default function SalaryPage() {
                     </span>
                   </div>
                 ))}
-                <Row label="Total deductions" value={`-${currency}${formatNumber(b.totalDeductions)}`} negative bold />
+                <div className="mt-2 border-t border-slate-200 pt-2">
+                  <Row label="Total deductions" value={`-${currency}${formatNumber(b.totalAllDeductions)}`} negative bold />
+                </div>
               </div>
 
               {canEdit && (
@@ -413,7 +451,7 @@ export default function SalaryPage() {
                     <div key={h.id} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-sm">
                       <div>
                         <p className="font-semibold text-slate-700">{h.periodStart && h.periodEnd ? `${formatDayKey(h.periodStart)} – ${formatDayKey(h.periodEnd)}` : monthLabel(h.year, h.month)} <Badge tone={STATUS_TONE[h.status] ?? "slate"}>{h.status}</Badge></p>
-                        <p className="text-xs text-slate-400">Earned {currency}{formatNumber(h.attendanceSalary)} · Deductions {currency}{formatNumber(h.totalDeductions)} {h.disbursementDate ? `· Disburses ${formatDayKey(h.disbursementDate)}` : ""}</p>
+                        <p className="text-xs text-slate-400">Earned {currency}{formatNumber(Number(h.attendanceSalary))} · Deductions {currency}{formatNumber(Math.max(0, Number(h.basicSalary) - Number(h.attendanceSalary)) + Number(h.totalDeductions))} {h.disbursementDate ? `· Disburses ${formatDayKey(h.disbursementDate)}` : ""}</p>
                       </div>
                       <p className="font-bold text-emerald-600">{currency}{formatNumber(h.netPayable)}</p>
                     </div>
@@ -425,10 +463,14 @@ export default function SalaryPage() {
           </div>
           <div className="mt-4">
             <DeductionLog
+              canExcuse={!!canEdit}
+              onExcuse={async (id: string, excused: boolean) => {
+                await api(`/api/attendance/${id}/excuse`, { method: "POST", body: JSON.stringify({ excused }) });
+                await load();
+              }}
               ledger={b.ledger}
               currency={currency}
-              absentDeduction={Math.max(0, b.basicSalary - b.attendanceSalary)}
-              totalDeductions={b.totalDeductions}
+              expectedTotal={b.totalAllDeductions}
             />
           </div>
           {!isAdmin && (
@@ -443,6 +485,8 @@ export default function SalaryPage() {
 }
 
 interface LedgerLine {
+  provisional?: boolean;
+  attendanceId?: string | null;
   date: string | null;
   kind: string;
   reason: string;
@@ -450,8 +494,22 @@ interface LedgerLine {
 }
 
 /** The day-wise deduction log: every amount taken off, on the day it applies to, with the reason. */
-function DeductionLog({ ledger, currency, absentDeduction, totalDeductions }: { ledger: LedgerLine[] | null; currency: string; absentDeduction: number; totalDeductions: number }) {
+function DeductionLog({
+  ledger,
+  currency,
+  expectedTotal,
+  canExcuse,
+  onExcuse,
+}: {
+  ledger: LedgerLine[] | null;
+  currency: string;
+  expectedTotal: number; // the summary's Total deductions; the log must add up to this
+  canExcuse: boolean;
+  onExcuse: (attendanceId: string, excused: boolean) => Promise<void>;
+}) {
   const money = (n: number) => `${currency}${formatNumber(n)}`;
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [err, setErr] = useState("");
   if (ledger === null) {
     return (
       <Card>
@@ -461,48 +519,113 @@ function DeductionLog({ ledger, currency, absentDeduction, totalDeductions }: { 
     );
   }
   const taken = Math.round(ledger.reduce((t, l) => t + l.amount, 0) * 100) / 100;
-  const expected = Math.round((absentDeduction + totalDeductions) * 100) / 100;
+  const expected = expectedTotal;
+  const toggle = async (line: LedgerLine, excused: boolean) => {
+    if (!line.attendanceId) return;
+    setBusyId(line.attendanceId);
+    setErr("");
+    try {
+      await onExcuse(line.attendanceId, excused);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Could not update this entry");
+    } finally {
+      setBusyId(null);
+    }
+  };
+  const action = (l: LedgerLine) => {
+    if (!canExcuse || !l.attendanceId) return null;
+    if (l.kind === "late")
+      return (
+        <button
+          type="button"
+          onClick={() => toggle(l, true)}
+          disabled={busyId !== null}
+          className="rounded-lg bg-white px-2.5 py-1 text-xs font-semibold text-indigo-700 ring-1 ring-indigo-200 hover:bg-indigo-50 disabled:opacity-50"
+        >
+          {busyId === l.attendanceId ? "Saving…" : "Excuse"}
+        </button>
+      );
+    if (l.kind === "excused")
+      return (
+        <button
+          type="button"
+          onClick={() => toggle(l, false)}
+          disabled={busyId !== null}
+          className="rounded-lg bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 disabled:opacity-50"
+        >
+          Undo
+        </button>
+      );
+    return null;
+  };
+  const live = (l: LedgerLine) =>
+    l.provisional ? <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800">Today · live</span> : null;
+
   return (
     <Card>
-      <h3 className="mb-1 font-bold text-slate-900">Day-wise deduction log</h3>
+      <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="font-bold text-slate-900">Day-wise deduction log</h3>
+        <span className="text-xs font-semibold text-slate-500">Total taken: {money(taken)}</span>
+      </div>
       <p className="mb-3 text-xs leading-relaxed text-slate-500">
-        Every amount taken off this salary, on the day it applies to, with the reason. Unpaid absences are listed here too, even though Earnings shows them as a reduction.
+        Every amount taken off this salary, on the day it applies to, with the reason. Changes made today show immediately. Excusing a late mark or approving leave reverses the deduction automatically.
       </p>
+      {err && <p className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{err}</p>}
       {ledger.length === 0 ? (
         <p className="text-sm text-slate-400">Nothing was deducted this cycle.</p>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[520px] text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500">
-                <th className="py-2 pr-3">Date</th>
-                <th className="py-2 pr-3">Reason</th>
-                <th className="py-2 text-right">Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {ledger.map((l, i) => (
-                <tr key={i} className="border-b border-slate-100 align-top">
-                  <td className="whitespace-nowrap py-2 pr-3 font-medium text-slate-700">{l.date ? formatDayKey(l.date) : "No date"}</td>
-                  <td className="py-2 pr-3 text-slate-600">{l.reason}</td>
-                  <td className={`whitespace-nowrap py-2 text-right font-semibold ${l.amount > 0 ? "text-rose-600" : "text-slate-400"}`}>
+        <>
+          <ul className="space-y-2 sm:hidden">
+            {ledger.map((l, i) => (
+              <li key={i} className="rounded-xl border border-slate-200 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <p className="text-xs font-bold text-slate-700">
+                    {l.date ? formatDayKey(l.date) : "No date"}
+                    {live(l)}
+                  </p>
+                  <p className={`shrink-0 text-sm font-bold ${l.amount > 0 ? "text-rose-600" : "text-slate-400"}`}>
                     {l.amount > 0 ? `−${money(l.amount)}` : "not deducted"}
-                  </td>
+                  </p>
+                </div>
+                <p className="mt-1 text-sm text-slate-600">{l.reason}</p>
+                {action(l) && <div className="mt-2">{action(l)}</div>}
+              </li>
+            ))}
+          </ul>
+          <div className="hidden overflow-x-auto sm:block">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                  <th className="py-2 pr-3">Date</th>
+                  <th className="py-2 pr-3">Reason</th>
+                  <th className="py-2 text-right">Amount</th>
+                  {canExcuse && <th className="py-2 pl-3 text-right"> </th>}
                 </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr className="font-bold text-slate-900">
-                <td className="py-2 pr-3" colSpan={2}>Total taken off this cycle</td>
-                <td className="py-2 text-right text-rose-600">−{money(taken)}</td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {ledger.map((l, i) => (
+                  <tr key={i} className="border-b border-slate-100 align-top">
+                    <td className="whitespace-nowrap py-2 pr-3 font-medium text-slate-700">
+                      {l.date ? formatDayKey(l.date) : "No date"}
+                      {live(l)}
+                    </td>
+                    <td className="py-2 pr-3 text-slate-600">{l.reason}</td>
+                    <td className={`whitespace-nowrap py-2 text-right font-semibold ${l.amount > 0 ? "text-rose-600" : "text-slate-400"}`}>
+                      {l.amount > 0 ? `−${money(l.amount)}` : "not deducted"}
+                    </td>
+                    {canExcuse && <td className="py-2 pl-3 text-right">{action(l)}</td>}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
-      {ledger.length > 0 && Math.abs(taken - expected) < 0.5 && (
-        <p className="mt-2 text-[11px] text-slate-400">Matches the deductions above plus unpaid absences. Lines are rounded to paise.</p>
-      )}
+      <p className="mt-3 text-[11px] text-slate-400">
+        {Math.abs(taken - expected) < 0.01
+          ? `The log adds up to the ${money(expected)} total deductions above.`
+          : `The log totals ${money(taken)} but the summary shows ${money(expected)}. Pending changes will settle on the next refresh.`}
+      </p>
     </Card>
   );
 }
@@ -511,7 +634,7 @@ function Row({ label, value, negative, bold }: { label: string; value: string; n
   return (
     <div className="flex items-center justify-between gap-3">
       <span className="text-slate-500">{label}</span>
-      <span className={`font-semibold ${bold ? "text-slate-900" : negative ? "text-rose-600" : "text-slate-700"}`}>{value}</span>
+      <span className={`whitespace-nowrap font-semibold ${bold ? "text-slate-900" : negative ? "text-rose-600" : "text-slate-700"}`}>{value}</span>
     </div>
   );
 }

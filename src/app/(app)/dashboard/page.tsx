@@ -49,6 +49,7 @@ interface SalaryData {
     basicSalary: number;
     attendanceSalary: number;
     totalDeductions: number;
+    totalAllDeductions: number;
     netPayable: number;
     presentDays: number;
     lateDays: number;
@@ -491,8 +492,8 @@ function EmployeeDashboard() {
                 </p>
                 <p className="text-xs text-slate-500">Net payable so far</p>
                 <dl className="mt-4 space-y-2 border-t border-slate-100 pt-4 text-sm">
-                  <div className="flex justify-between"><dt className="text-slate-500">Attendance salary</dt><dd className="font-semibold text-slate-800">{CURRENCY}{formatNumber(salary.breakdown.attendanceSalary)}</dd></div>
-                  <div className="flex justify-between"><dt className="text-slate-500">Deductions</dt><dd className="font-semibold text-rose-600">−{CURRENCY}{formatNumber(salary.breakdown.totalDeductions)}</dd></div>
+                  <div className="flex justify-between"><dt className="text-slate-500">Basic salary</dt><dd className="font-semibold text-slate-800">{CURRENCY}{formatNumber(salary.breakdown.basicSalary)}</dd></div>
+                  <div className="flex justify-between"><dt className="text-slate-500">Deductions (incl. unapproved absences)</dt><dd className="font-semibold text-rose-600">−{CURRENCY}{formatNumber(salary.breakdown.totalAllDeductions)}</dd></div>
                   <div className="flex justify-between"><dt className="text-slate-500">Salary delayed (unapproved leave)</dt><dd className="font-semibold text-amber-700">{salary.breakdown.salaryHoldDays} days</dd></div>
                 </dl>
                 <Link href="/salary" className="mt-4 block rounded-xl bg-slate-50 px-3 py-2.5 text-center text-xs font-semibold text-slate-700 hover:bg-slate-100">
