@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { and, count, desc, eq, gte, lt } from "drizzle-orm";
 import { db } from "@/db";
-import { attendance, companies, companySettings, employees, platformEvents, subscriptions, users } from "@/db/schema";
+import { attendance, companies, companySettings, employees, platformEvents, plans, subscriptions, users } from "@/db/schema";
 import { getAuth, hashPassword } from "@/lib/auth";
+import { activatePlan, startTrialTx } from "@/lib/billing";
+import { validateCycleInput } from "@/lib/billing-core";
 
 export async function GET() {
   const ctx = await getAuth();
@@ -47,6 +49,9 @@ export async function GET() {
       phone: r.company.phone,
       status: r.company.status,
       subscriptionPlan: r.company.subscriptionPlan,
+      subscriptionStatus: r.company.subscriptionStatus,
+      accessUntil: r.company.accessUntil,
+      employeeLimit: r.company.employeeLimit,
       employeeCount: Number(r.employeeCount),
       subscription: subByCompany.get(r.company.id)
         ? {
@@ -72,24 +77,35 @@ export async function POST(req: Request) {
   if (action === "updateCompany") {
     const companyId = String(body.companyId || "");
     const status = ["active", "suspended", "deactivated"].includes(String(body.status)) ? String(body.status) : null;
-    const plan = String(body.plan || "");
     if (!companyId) return NextResponse.json({ error: "companyId is required" }, { status: 400 });
-
-    const update: Record<string, unknown> = {};
-    if (status) update.status = status;
-    if (plan) update.subscriptionPlan = plan;
-    if (Object.keys(update).length) {
-      await db.update(companies).set(update).where(eq(companies.id, companyId));
-      if (plan) {
-        const existingSub = await db.select().from(subscriptions).where(eq(subscriptions.companyId, companyId)).limit(1);
-        if (existingSub[0]) {
-          await db.update(subscriptions).set({ plan, status: "active" }).where(eq(subscriptions.companyId, companyId));
-        } else {
-          await db.insert(subscriptions).values({ companyId, plan });
-        }
-      }
-    }
+    if (status) await db.update(companies).set({ status }).where(eq(companies.id, companyId));
     return NextResponse.json({ ok: true });
+  }
+
+  if (action === "grantSubscription") {
+    // Platform override: activate any plan for a company at no charge (e.g. a sales deal, or manual invoicing).
+    const companyId = String(body.companyId || "");
+    const planId = String(body.planId || "");
+    if (!/^[0-9a-f-]{36}$/i.test(companyId) || !/^[0-9a-f-]{36}$/i.test(planId)) {
+      return NextResponse.json({ error: "Choose a company and a plan." }, { status: 400 });
+    }
+    const cycle = validateCycleInput({ months: body.months, discountPercent: 0 });
+    if (!cycle.ok) return NextResponse.json({ error: cycle.error }, { status: 400 });
+
+    const [company] = await db.select().from(companies).where(eq(companies.id, companyId)).limit(1);
+    if (!company) return NextResponse.json({ error: "Company not found." }, { status: 404 });
+    const [plan] = await db.select().from(plans).where(eq(plans.id, planId)).limit(1);
+    if (!plan) return NextResponse.json({ error: "Plan not found." }, { status: 404 });
+
+    const result = await activatePlan({
+      companyId,
+      plan,
+      months: cycle.value.months,
+      discountPercent: 0,
+      actorId: ctx.user.id,
+      comped: true,
+    });
+    return NextResponse.json({ ok: true, endDate: result.endDate.toISOString() });
   }
 
   if (action === "deleteCompany") {
@@ -132,21 +148,23 @@ export async function POST(req: Request) {
     const name = String(body.name || "").trim();
     const email = String(body.email || "").trim().toLowerCase();
     const password = String(body.password || "");
-    const plan = String(body.plan || "basic");
     if (!name || !email || password.length < 8) {
       return NextResponse.json({ error: "Company name, admin email and password (min 8 chars) are required." }, { status: 400 });
     }
     const existing = await db.select().from(users).where(eq(users.email, email)).limit(1);
     if (existing.length) return NextResponse.json({ error: "Email already in use." }, { status: 409 });
 
-    const comp = await db.insert(companies).values({ name, email, subscriptionPlan: plan }).returning();
-    await db.insert(companySettings).values({ companyId: comp[0].id });
-    await db.insert(subscriptions).values({ companyId: comp[0].id, plan });
-    const admin = await db
-      .insert(users)
-      .values({ companyId: comp[0].id, email, passwordHash: hashPassword(password), fullName: "Administrator", role: "company_admin" })
-      .returning();
-    return NextResponse.json({ ok: true, id: comp[0].id });
+    // Same starting point as self sign-up: a 20-day trial with the trial seat limit.
+    const companyId = await db.transaction(async (tx) => {
+      const [comp] = await tx.insert(companies).values({ name, email }).returning();
+      await tx.insert(companySettings).values({ companyId: comp.id });
+      await startTrialTx(tx, comp.id);
+      await tx
+        .insert(users)
+        .values({ companyId: comp.id, email, passwordHash: hashPassword(password), fullName: "Administrator", role: "company_admin" });
+      return comp.id;
+    });
+    return NextResponse.json({ ok: true, id: companyId });
   }
 
   return NextResponse.json({ error: "Unknown action" }, { status: 400 });

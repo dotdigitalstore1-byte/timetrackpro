@@ -32,6 +32,12 @@ export const companies = pgTable("companies", {
   taxId: varchar("tax_id", { length: 50 }), // GSTIN / PAN / registration number, shown on slips
   status: varchar("status", { length: 20 }).notNull().default("active"), // active | suspended | deactivated
   subscriptionPlan: varchar("subscription_plan", { length: 50 }).notNull().default("trial"),
+  // Access window. NULL = no expiry (legacy account that predates billing). Set from the trial or a plan.
+  accessUntil: timestamp("access_until", { withTimezone: true }),
+  // Seat limit: active employees + managers. NULL = unlimited (legacy account).
+  employeeLimit: integer("employee_limit"),
+  // trial | active | legacy. Drives the trial banner and the "trial ended" vs "subscription ended" wording.
+  subscriptionStatus: varchar("subscription_status", { length: 20 }).notNull().default("legacy"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -42,9 +48,66 @@ export const subscriptions = pgTable("subscriptions", {
     .references(() => companies.id, { onDelete: "cascade" }),
   plan: varchar("plan", { length: 50 }).notNull().default("trial"),
   amount: numeric("amount", { precision: 12, scale: 2 }).notNull().default("0"),
-  status: varchar("status", { length: 20 }).notNull().default("active"), // active | expired | cancelled
+  status: varchar("status", { length: 20 }).notNull().default("active"), // trial | active | replaced | cancelled
+  planId: uuid("plan_id").references(() => plans.id, { onDelete: "set null" }),
+  employeeLimit: integer("employee_limit"),
+  billingMonths: integer("billing_months"), // 1, 6 or 12 for paid periods; NULL for trials
   startDate: timestamp("start_date", { withTimezone: true }).notNull().defaultNow(),
   endDate: timestamp("end_date", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Admin-editable subscription plans. Tiers are keyed by seat count: a company buys the smallest plan
+// whose employeeLimit covers its headcount. Every feature is included on every plan.
+export const plans = pgTable(
+  "plans",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: varchar("name", { length: 100 }).notNull(),
+    employeeLimit: integer("employee_limit").notNull(),
+    price: numeric("price", { precision: 12, scale: 2 }).notNull(), // per month, for the whole tier (INR)
+    compareAtPrice: numeric("compare_at_price", { precision: 12, scale: 2 }), // strike-through "was" price, per month
+    features: jsonb("features").$type<string[]>().notNull().default([]),
+    isActive: boolean("is_active").notNull().default(true),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("plans_employee_limit_uq").on(t.employeeLimit)]
+);
+
+// Billing durations offered at checkout, each with the discount applied to the whole period.
+export const billingCycles = pgTable(
+  "billing_cycles",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    months: integer("months").notNull(),
+    label: varchar("label", { length: 60 }).notNull(),
+    discountPercent: numeric("discount_percent", { precision: 5, scale: 2 }).notNull().default("0"),
+    isActive: boolean("is_active").notNull().default(true),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("billing_cycles_months_uq").on(t.months)]
+);
+
+// Company sign-ups waiting for their email OTP. The company is created only after the code is verified.
+// The password is stored already hashed and the code is stored only as a salted hash.
+export interface PendingRegistrationPayload {
+  companyName: string;
+  adminName: string;
+  phone: string;
+  timezone: string;
+  passwordHash: string;
+}
+
+export const pendingRegistrations = pgTable("pending_registrations", {
+  email: varchar("email", { length: 200 }).primaryKey(),
+  payload: jsonb("payload").$type<PendingRegistrationPayload>().notNull(),
+  codeHash: text("code_hash").notNull(),
+  attempts: integer("attempts").notNull().default(0),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  lastSentAt: timestamp("last_sent_at", { withTimezone: true }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -59,6 +122,8 @@ export const users = pgTable("users", {
   managerPermissions: jsonb("manager_permissions").$type<string[]>().notNull().default([]),
   phone: varchar("phone", { length: 50 }),
   isActive: boolean("is_active").notNull().default(true),
+  // Set when an admin resets the password: the user must choose their own password at next use.
+  mustChangePassword: boolean("must_change_password").notNull().default(false),
   // When the notification centre was last opened. Items newer than this are unread.
   notificationsSeenAt: timestamp("notifications_seen_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -637,6 +702,40 @@ export const auditLogs = pgTable("audit_logs", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Payments through a gateway (Razorpay / Cashfree). The amount is set on the server from the plan quote.
+export const payments = pgTable(
+  "payments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    companyId: uuid("company_id").notNull().references(() => companies.id, { onDelete: "cascade" }),
+    planId: uuid("plan_id").references(() => plans.id, { onDelete: "set null" }),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    provider: varchar("provider", { length: 20 }).notNull(), // razorpay | cashfree
+    providerOrderId: varchar("provider_order_id", { length: 120 }),
+    providerPaymentId: varchar("provider_payment_id", { length: 120 }),
+    months: integer("months").notNull(),
+    amount: numeric("amount", { precision: 12, scale: 2 }).notNull(), // rupees
+    discountPercent: numeric("discount_percent", { precision: 5, scale: 2 }).notNull().default("0"),
+    currency: varchar("currency", { length: 3 }).notNull().default("INR"),
+    status: varchar("status", { length: 20 }).notNull().default("created"), // created | processing | paid | failed
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+  },
+  (t) => [uniqueIndex("payments_provider_order_uq").on(t.provider, t.providerOrderId)]
+);
+
+// Forgot-password requests. The code is hashed; after it is verified, a short-lived reset token is kept (hashed).
+export const passwordResets = pgTable("password_resets", {
+  email: varchar("email", { length: 200 }).primaryKey(),
+  codeHash: text("code_hash").notNull(),
+  attempts: integer("attempts").notNull().default(0),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  lastSentAt: timestamp("last_sent_at", { withTimezone: true }).notNull(),
+  resetTokenHash: text("reset_token_hash"),
+  resetTokenExpiresAt: timestamp("reset_token_expires_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // Relations (used by queries with joins)
 export const usersRelations = relations(users, ({ one }) => ({
   company: one(companies, { fields: [users.companyId], references: [companies.id] }),
@@ -663,3 +762,6 @@ export type CompanyAgreement = typeof companyAgreements.$inferSelect;
 export type AgreementAcknowledgement = typeof agreementAcknowledgements.$inferSelect;
 export type NoticePeriod = typeof noticePeriods.$inferSelect;
 export type AdminFeedbackResponse = typeof adminFeedbackResponses.$inferSelect;
+export type Plan = typeof plans.$inferSelect;
+export type BillingCycle = typeof billingCycles.$inferSelect;
+export type PendingRegistration = typeof pendingRegistrations.$inferSelect;

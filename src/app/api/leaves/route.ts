@@ -3,6 +3,7 @@ import { and, desc, eq, gte, inArray, lt, lte } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLogs, employees, leaveRequests, users } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
+import { restrictedResponse } from "@/lib/restriction";
 import { loadAccess, visibleEmployeeIds } from "@/lib/access";
 import { holidayKeys, weeklyOffOf } from "@/lib/company";
 import { countWorkdaysBetween, leaveCredits, localWorkDate, type LeaveAccrualMode } from "@/lib/payroll";
@@ -15,6 +16,7 @@ export async function GET() {
   const ctx = await getAuth();
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (ctx.user.role === "super_admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (ctx.restricted) return restrictedResponse();
   const companyId = ctx.company!.id;
   const tz = ctx.settings?.timezone ?? "UTC";
 

@@ -80,6 +80,7 @@ export default function AppShell({
   const mainNav: NavItem[] = isSuperAdmin
     ? [
         { href: "/superadmin", label: "Companies", icon: icons.building },
+        { href: "/superadmin/plans", label: "Plans", icon: icons.rules },
         { href: "/superadmin/analytics", label: "Analytics", icon: icons.analytics },
       ]
     : [
@@ -105,6 +106,7 @@ export default function AppShell({
               { href: "/agreements", label: "Agreements", icon: icons.agreements },
               { href: "/notice", label: "Notice period", icon: icons.notice },
               { href: "/settings", label: "Settings", icon: icons.settings },
+              { href: "/billing", label: "Billing", icon: icons.salary },
             ]
           : []),
         { href: "/profile", label: "Profile", icon: icons.user },

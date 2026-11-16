@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { api } from "@/lib/client";
 import { Badge, Button, Card, Input, Modal, PageHeader, Select, Spinner, StatCard } from "@/components/ui";
-import { formatDate, formatMoney, formatNumber } from "@/lib/utils";
+import { formatDate, formatNumber } from "@/lib/utils";
 
 interface CompanyRow {
   id: string;
@@ -12,6 +13,9 @@ interface CompanyRow {
   phone: string | null;
   status: string;
   subscriptionPlan: string;
+  subscriptionStatus: string;
+  accessUntil: string | null;
+  employeeLimit: number | null;
   employeeCount: number;
   subscription: { plan: string; amount: string; status: string; endDate: string | null } | null;
   createdAt: string;
@@ -22,6 +26,20 @@ interface Stats {
   activeCompanies: number;
   totalEmployees: number;
   presentCompaniesToday: number;
+}
+
+function accessSummary(c: CompanyRow): string {
+  if (!c.accessUntil) return "No expiry";
+  const trial = c.subscriptionStatus === "trial";
+  const expired = new Date(c.accessUntil).getTime() <= Date.now();
+  if (expired) return trial ? "Trial ended" : "Subscription ended";
+  return trial ? "Trial" : c.subscriptionPlan;
+}
+
+function accessDetail(c: CompanyRow): string {
+  const seats = c.employeeLimit === null ? "unlimited seats" : `${c.employeeLimit} seats`;
+  if (!c.accessUntil) return `Legacy account · ${seats}`;
+  return `until ${formatDate(c.accessUntil)} · ${seats}`;
 }
 
 export default function SuperAdminPage() {
@@ -39,7 +57,11 @@ export default function SuperAdminPage() {
   const [deleteError, setDeleteError] = useState("");
   const [notice, setNotice] = useState("");
 
-  const [form, setForm] = useState({ name: "", email: "", password: "", plan: "basic" });
+  const [form, setForm] = useState({ name: "", email: "", password: "" });
+  const [plans, setPlans] = useState<{ id: string; name: string; employeeLimit: number }[]>([]);
+  const [grantPlanId, setGrantPlanId] = useState("");
+  const [grantMonths, setGrantMonths] = useState(1);
+  const [granting, setGranting] = useState(false);
 
   const load = useCallback(async () => {
     setLoadError("");
@@ -57,7 +79,29 @@ export default function SuperAdminPage() {
 
   useEffect(() => {
     load();
+    api<{ plans: { id: string; name: string; employeeLimit: number }[] }>("/api/superadmin/plans")
+      .then((d) => setPlans(d.plans))
+      .catch(() => setPlans([]));
   }, [load]);
+
+  const grantPlan = async (companyId: string) => {
+    setGranting(true);
+    setError("");
+    try {
+      await api("/api/superadmin", {
+        method: "POST",
+        body: JSON.stringify({ action: "grantSubscription", companyId, planId: grantPlanId, months: grantMonths }),
+      });
+      setNotice("Subscription granted. The company's access has been updated.");
+      setGrantPlanId("");
+      setEditCompany(null);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not grant the subscription");
+    } finally {
+      setGranting(false);
+    }
+  };
 
   const createCompany = async () => {
     setSaving(true);
@@ -65,7 +109,7 @@ export default function SuperAdminPage() {
     try {
       await api("/api/superadmin", { method: "POST", body: JSON.stringify({ action: "createCompany", ...form }) });
       setCreateOpen(false);
-      setForm({ name: "", email: "", password: "", plan: "basic" });
+      setForm({ name: "", email: "", password: "" });
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Creation failed");
@@ -74,7 +118,7 @@ export default function SuperAdminPage() {
     }
   };
 
-  const updateCompany = async (companyId: string, patch: { status?: string; plan?: string }) => {
+  const updateCompany = async (companyId: string, patch: { status?: string }) => {
     await api("/api/superadmin", { method: "POST", body: JSON.stringify({ action: "updateCompany", companyId, ...patch }) });
     setEditCompany(null);
     await load();
@@ -182,12 +226,8 @@ export default function SuperAdminPage() {
                         </td>
                         <td className="px-4 py-3 font-semibold text-slate-700">{c.employeeCount}</td>
                         <td className="px-4 py-3 text-slate-600">
-                          {c.subscription ? (
-                            <>
-                              <p>{c.subscription.plan} · {formatMoney(c.subscription.amount, 0)}</p>
-                              <p className="text-xs text-slate-400">{c.subscription.endDate ? `until ${formatDate(c.subscription.endDate)}` : "—"}</p>
-                            </>
-                          ) : "—"}
+                          <p className="font-semibold text-slate-700">{accessSummary(c)}</p>
+                          <p className="text-xs text-slate-400">{accessDetail(c)}</p>
                         </td>
                         <td className="px-4 py-3">
                           <Badge tone={c.status === "active" ? "green" : c.status === "suspended" ? "amber" : "red"}>{c.status}</Badge>
@@ -220,7 +260,7 @@ export default function SuperAdminPage() {
                       <div>
                         <p className="text-slate-400">Subscription</p>
                         <p className="font-semibold text-slate-700">
-                          {c.subscription ? `${c.subscription.plan} · ${formatMoney(c.subscription.amount, 0)}` : "—"}
+                          {accessSummary(c)}
                         </p>
                       </div>
                       <div>
@@ -242,17 +282,9 @@ export default function SuperAdminPage() {
           <Input label="Company name" value={form.name} onChange={(v) => setForm({ ...form, name: v })} />
           <Input label="Admin email" type="email" value={form.email} onChange={(v) => setForm({ ...form, email: v })} />
           <Input label="Admin password (min 8 chars)" type="password" value={form.password} onChange={(v) => setForm({ ...form, password: v })} placeholder="At least 8 characters" />
-          <Select
-            label="Plan"
-            value={form.plan}
-            onChange={(v) => setForm({ ...form, plan: v })}
-            options={[
-              { value: "trial", label: "Trial" },
-              { value: "basic", label: "Basic" },
-              { value: "pro", label: "Pro" },
-              { value: "enterprise", label: "Enterprise" },
-            ]}
-          />
+          <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+            New companies start the 20-day free trial (up to 4 people). Grant a paid plan from the company&apos;s Manage panel.
+          </p>
           {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">{error}</p>}
           <Button className="w-full" onClick={createCompany} loading={saving}>Create Company</Button>
         </div>
@@ -271,23 +303,42 @@ export default function SuperAdminPage() {
                 { value: "deactivated", label: "Deactivated" },
               ]}
             />
-            <Select
-              label="Subscription plan"
-              value={editCompany.subscriptionPlan}
-              onChange={(v) => setEditCompany({ ...editCompany, subscriptionPlan: v })}
-              options={[
-                { value: "trial", label: "Trial" },
-                { value: "basic", label: "Basic" },
-                { value: "pro", label: "Pro" },
-                { value: "enterprise", label: "Enterprise" },
-              ]}
-            />
-            <Button
-              className="w-full"
-              onClick={() => updateCompany(editCompany.id, { status: editCompany.status, plan: editCompany.subscriptionPlan })}
-            >
+            <Button className="w-full" onClick={() => updateCompany(editCompany.id, { status: editCompany.status })}>
               Save Changes
             </Button>
+
+            <div className="space-y-3 rounded-xl border border-slate-200 p-4">
+              <div>
+                <p className="text-sm font-bold text-slate-900">Subscription</p>
+                <p className="mt-1 text-xs text-slate-500">{accessDetail(editCompany)}</p>
+              </div>
+              <Select
+                label="Grant a plan (no charge)"
+                value={grantPlanId}
+                onChange={setGrantPlanId}
+                options={[
+                  { value: "", label: "Choose a plan" },
+                  ...plans.map((p) => ({ value: p.id, label: `${p.name} · up to ${p.employeeLimit} employees` })),
+                ]}
+              />
+              <Select
+                label="Length"
+                value={String(grantMonths)}
+                onChange={(v) => setGrantMonths(Number(v))}
+                options={[
+                  { value: "1", label: "1 month" },
+                  { value: "6", label: "6 months" },
+                  { value: "12", label: "12 months" },
+                ]}
+              />
+              <Button variant="secondary" className="w-full" disabled={!grantPlanId} loading={granting} onClick={() => grantPlan(editCompany.id)}>
+                Grant subscription
+              </Button>
+              <p className="text-[11px] text-slate-400">
+                Replaces any current trial or paid period, starting today. Use it for sales deals or offline invoices. Plans are managed in{" "}
+                <Link href="/superadmin/plans" className="font-semibold text-indigo-600 hover:underline">Plans</Link>.
+              </p>
+            </div>
 
             <div className="rounded-xl border border-rose-200 bg-rose-50/60 p-4">
               <p className="text-sm font-bold text-rose-800">Danger zone</p>

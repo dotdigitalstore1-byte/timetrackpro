@@ -213,6 +213,12 @@ export async function GET(req: Request) {
       }))
     : null;
 
+  if (ctx.restricted) {
+    // Hidden-history phase: the person still sees today's punch (so they can punch out), nothing from before.
+    const todayOnly = listRows.filter((r) => new Date(r.workDate).toISOString().slice(0, 10) === today);
+    return NextResponse.json({ today, month: monthKey, period: periodInfo, summary: EMPTY_CYCLE_COUNTS, days: null, records: todayOnly, restricted: true });
+  }
+
   return NextResponse.json({
     today,
     month: monthKey,

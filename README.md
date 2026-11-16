@@ -23,7 +23,10 @@ a mobile app (Android/desktop install) and a responsive web app.
   deactivate/reactivate and admin password reset. Department and location are required when adding an employee.
 * **Self-service profile** for every user: update name/phone and change password securely.
 * **Reports** (daily/weekly/monthly/yearly) with a department filter, exported to Excel, CSV and PDF.
-* **Billing-ready platform admin** for creating companies, plans and account status.
+* **SaaS billing**: a 20-day free trial (up to 4 people), per-seat plans, 1 / 6 / 12-month billing with automatic
+  discounts, and a platform plan builder. Every feature is included on every plan; only the seat count differs.
+* **Email-verified sign-up**: companies confirm their admin email with a one-time code before the workspace is created.
+* **Public landing page** at `/` with the feature list, pricing and FAQ.
 * **Responsive UI**: tables become touch-friendly cards on phones, bottom navigation, safe-area support,
   install prompt and offline fallback.
 * **Reliable data fetching**: one shared session request, request timeouts, typed API errors and error
@@ -36,9 +39,10 @@ npm install
 cp .env.example .env          # set DATABASE_URL + SUPER_ADMIN_EMAIL / SUPER_ADMIN_PASSWORD
 npm run db:push               # create/update tables (or: db:generate && db:migrate)
 # existing databases: run migrations/2026-11-agreements-notice-notifications.sql once (idempotent)
+# existing databases: run migrations/2026-11-saas-billing-and-otp.sql once (idempotent; adds plans, trials, OTP)
 npm run db:backfill           # ONE TIME, only if you already had employees: turns the old free-text
                               # "department" values into real departments and links them
-npm test                      # payroll + timezone unit tests
+npm test                      # payroll, billing, OTP and timezone unit tests
 npm run dev
 ```
 
@@ -48,7 +52,7 @@ the next successful login, so changing either value applies immediately — no s
 endpoint, or manual database update is needed.
 
 Deploy to Vercel: add `DATABASE_URL`, `SUPER_ADMIN_*` as environment variables. Any hosted Postgres works
-(Neon, Supabase Postgres, RDS…). Companies self-register at `/register`.
+(Neon, Supabase Postgres, RDS…). Companies self-register at `/register`, and visitors land on the public page at `/`.
 
 > **Stack note:** this codebase uses its own session auth and server-side tenant scoping on Postgres.
 > It does **not** use Supabase Auth, Supabase RLS or Supabase Storage. A Supabase *database* can host it
@@ -376,3 +380,106 @@ Every rule and toggle has an **i** button. It explains what the rule does and gi
 * Punch photos are compressed to 50-100 KB before upload (see *Photo compression*).
 * Reports offer **Last 30 days** and **Last 90 days (text records)**, so the 90-day text data can be exported as
   Excel, CSV or PDF. Photos are not included.
+
+## Subscriptions, trial and pricing
+
+* **Trial:** every new company gets **20 days** and **up to 4 people** (employees and managers together). No card is
+  needed. The company admin sees a banner with the days left.
+* **Lockout:** when the trial or a paid period ends, every page and API for that company is closed, historical data
+  included. The company admin is sent to **`/billing`**, which stays open so they can subscribe. Other staff see a
+  message to ask their admin to renew. Access returns as soon as a plan is active.
+* **Seats:** the seat limit counts active employees and managers. The company admin account is free. Adding or
+  reactivating a person is refused with a clear message once every seat is in use. Deactivating someone frees their seat.
+* **Plans** are kept in the database, not in code. Each plan has a seat count, a monthly price, an optional
+  **compare-at** price (shown struck through), a feature list and an active/hidden status. The launch list is
+  1, 2, 3, 4, 5, 10, 20, 30, 50 and 100 seats at ₹99, ₹200, ₹300, ₹400, ₹500, ₹900, ₹1,749, ₹2,499, ₹2,999 and ₹7,999 a month.
+  Companies buy the smallest plan that covers their headcount.
+* **Billing lengths:** 1, 6 and 12 months. Each length has a discount that is applied to the whole period. The
+  defaults (0%, 10%, 20%) are starting values; change them under **Plans**. Totals round to whole rupees.
+* **Plan builder** (platform admin → **Plans**): create, edit, hide and delete plans, set billing discounts, and
+  grant a plan to any company at no charge (for sales deals or offline invoices). A plan with subscribers can be
+  hidden but not deleted. Changes to a plan's price or seat count apply to new purchases only; existing subscriptions keep what they bought.
+* **Changing plans** starts a new billing period from that day. There is no proration yet.
+
+### Payments (Razorpay and Cashfree)
+
+Checkout is built and waiting for keys. Set `PAYMENT_PROVIDER` and the provider's keys (see `.env.example`). The
+billing page then shows **Pay with Razorpay** or **Pay with Cashfree**, and the subscription opens automatically once paid.
+
+* **Price is never taken from the browser.** The server quotes the plan and billing length, records a pending payment,
+  and creates the gateway order with that amount.
+* **Activation is confirmed twice.** When the payer returns, the server asks the gateway whether the payment was
+  captured, and checks the amount. A webhook does the same independently. Each payment is activated exactly once, so
+  the two can arrive in either order.
+* **Webhook signatures are verified** on the raw request body (Razorpay: HMAC-SHA256 with the webhook secret;
+  Cashfree: base64 HMAC-SHA256 over timestamp + body with the secret key). Unsigned or altered requests are refused.
+* **Setup:** register the webhook URLs listed in `.env.example` in each dashboard. Test with the sandbox first
+  (`CASHFREE_ENV=sandbox`, Razorpay test keys). Cashfree checkout needs the company admin or company to have a 10-digit
+  mobile number.
+* **Status:** the integration follows each gateway's documented API, but it has not been run against live gateway
+  accounts. Run a full sandbox purchase, a failed payment, and a webhook replay before going live.
+
+With no provider configured, production still refuses self-service activation unless `BILLING_MANUAL_ACTIVATION=true`.
+
+## Company email verification
+
+Sign-up is two steps: the admin enters the company details, then types a 6-digit code sent to their email. The code
+expires after 10 minutes, allows 5 attempts, and can be requested again after 60 seconds. Codes are stored only as
+salted hashes. Sign-up requests are rate-limited per IP and per email address.
+
+* **Email delivery** uses the Resend HTTP API: set `RESEND_API_KEY` and `MAIL_FROM` (see `.env.example`).
+* **Development fallback:** when no provider is configured, or the provider fails, the code is written to the
+  server console (the terminal running `npm run dev`). This happens in development without any extra setting.
+* **Production:** if email cannot be sent, sign-up stops with a clear error. Setting `OTP_CONSOLE_FALLBACK=true`
+  writes codes to the logs instead. Use that only in a staging environment you control.
+
+## Upgrading an existing database
+
+Run `migrations/2026-11-saas-billing-and-otp.sql` once. It is idempotent. It:
+- seeds the launch plans and billing lengths (existing rows are kept);
+- gives every **existing trial account one 20-day window that starts when you run the migration** and sets its seat
+  limit to 4;
+- leaves all other existing companies on a **legacy** account with no expiry and unlimited seats.
+  The platform admin can move them onto a plan from the Companies page.
+
+## Sign-in, passwords and sessions
+
+* **Stay signed in:** the session cookie lasts 400 days, the longest lifetime browsers accept. Sign-out, a password
+  reset, or an admin password reset ends the session everywhere.
+* **OTP codes are only for two things:** verifying a new company's email at sign-up, and the **forgot password** flow
+  (`/forgot-password`). Signing in never asks for a code. Forgot-password replies are the same whether or not the
+  account exists.
+* **Forced password change:** when an admin sets a temporary password, the employee is signed out everywhere and must
+  choose their own password at next use. The app enforces this in the interface. Server-side enforcement would need a
+  per-route check and is not yet in place.
+
+## Employee administration (company admin)
+
+* **Edit** any employee's details from the Employees page.
+* **Remove** deactivates the account. Their history is kept, and they can no longer sign in or punch.
+* **Delete permanently** is available only after deactivation, and requires typing the employee's full name. It erases
+  their attendance, leave and salary records and their correction history. Export what you need first.
+* **Promote to manager** keeps their departments, locations and history. Their employee profile is switched off, so
+  they stop punching and stop appearing on payroll. Set their manager powers on the Managers page.
+* **Reset password** sets a temporary password, signs them out everywhere, and requires them to choose their own.
+
+## Subscription expiry: what each person sees
+
+Expiry is handled in phases, measured in days since a paid period ended. Trials have no grace period.
+
+| Days since expiry | Company admin | Employees and managers |
+|---|---|---|
+| 0 to 4 | Locked to Billing | Work as normal. No message about the plan |
+| 5 to 29 | Locked to Billing | Can punch in and out. Personal history (attendance, leave, salary) is hidden behind "Contact Admin to see these details." |
+| 30 and later | Locked to Billing | Locked out. Shown a neutral "workspace is unavailable" page |
+
+Trial expiry locks everyone straight away, because the trial was never a paid commitment. Hidden history is enforced on
+the server: the attendance history, leave and salary APIs return a restricted response, and punching and today's
+status keep working. Dashboard summary tiles and photo links are not yet hidden in this phase.
+
+## Mobile layout
+
+The public page uses two-column cards on phones, and the pricing slider updates the price as it moves. The billing
+page respects the phone's top and bottom safe areas (notch and home indicator). It has its own header and no bottom
+navigation bar, so the two bars cannot overlap.
+

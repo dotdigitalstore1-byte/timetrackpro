@@ -59,6 +59,9 @@ export default function LoginPage() {
           >
             <Input label="Email" type="email" value={email} onChange={setEmail} placeholder="you@company.com" />
             <Input label="Password" type="password" value={password} onChange={setPassword} placeholder="••••••••" />
+            <div className="-mt-1 text-right">
+              <Link href="/forgot-password" className="text-xs font-semibold text-indigo-600 hover:underline">Forgot password?</Link>
+            </div>
             {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">{error}</p>}
             <Button className="w-full" loading={loading} type="submit" disabled={!email || !password}>
               Sign In

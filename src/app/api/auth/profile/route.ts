@@ -39,6 +39,7 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ error: "Your current password is incorrect." }, { status: 400 });
     }
     update.passwordHash = hashPassword(newPassword);
+    update.mustChangePassword = false;
   }
 
   if (Object.keys(update).length === 0) {

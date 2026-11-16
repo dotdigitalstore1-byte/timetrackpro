@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { api, hasPower, useMe } from "@/lib/client";
 import { Badge, Button, Card, ChipSelect, EmptyState, ErrorBanner, Input, Modal, PageHeader, Select, Spinner } from "@/components/ui";
+import EmployeeAdminActions from "@/components/EmployeeAdminActions";
 import { formatDate, formatNumber, CURRENCY } from "@/lib/utils";
 
 interface OrgRef {
@@ -88,6 +89,7 @@ export default function EmployeesPage() {
   const [loadError, setLoadError] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<EmployeeRow | null>(null);
+  const [notice, setNotice] = useState("");
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -392,6 +394,12 @@ export default function EmployeesPage() {
         </>
       )}
 
+      {notice && (
+        <div className="mb-4 flex items-start justify-between gap-3 rounded-xl bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">
+          <span>{notice}</span>
+          <button type="button" onClick={() => setNotice("")} className="shrink-0 text-emerald-700 hover:underline">Dismiss</button>
+        </div>
+      )}
       <Modal open={modalOpen} onClose={() => setModalOpen(false)} title={editing ? `Edit ${editing.fullName}` : "Add Employee"}>
         <div className="space-y-3">
           <Input label="Full name" value={form.fullName} onChange={(v) => setForm({ ...form, fullName: v })} />
@@ -441,6 +449,19 @@ export default function EmployeesPage() {
             <Button variant="secondary" className="flex-1" onClick={() => setModalOpen(false)}>Cancel</Button>
             <Button className="flex-1" onClick={save} loading={saving}>{editing ? "Save Changes" : "Add Employee"}</Button>
           </div>
+          {editing && isAdmin && (
+            <EmployeeAdminActions
+              employeeId={editing.id}
+              fullName={editing.fullName}
+              role={(editing as unknown as { role?: string }).role ?? "employee"}
+              isActive={(editing as unknown as { isActive?: boolean }).isActive ?? true}
+              onChanged={(message) => {
+                setModalOpen(false);
+                setNotice(message);
+                void load();
+              }}
+            />
+          )}
         </div>
       </Modal>
     </div>

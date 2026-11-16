@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLogs, employees, users } from "@/db/schema";
+import { auditLogs, employees, sessions, users } from "@/db/schema";
+import { removeEmployeeUser } from "@/lib/employee-removal";
 import { getAuth, hashPassword } from "@/lib/auth";
 import { can, canSeeEmployee, loadAccess } from "@/lib/access";
 import { codeOwner, normaliseCode } from "@/lib/employee-code";
 import { shiftOf } from "@/lib/company";
 import { parseIdList, replaceEmployeeOrg, validateOrgIds } from "@/lib/org";
 import { isValidHHMM, parseHHMM } from "@/lib/payroll";
+import { seatBlock } from "@/lib/billing";
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await getAuth();
@@ -46,6 +48,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: "A new password must be at least 8 characters." }, { status: 400 });
     }
     userUpdate.passwordHash = hashPassword(body.password);
+    // Admin-set passwords are temporary: the employee must choose their own at next sign-in.
+    userUpdate.mustChangePassword = true;
   }
   if (body.employeeCode !== undefined) {
     const code = normaliseCode(String(body.employeeCode || ""));
@@ -76,6 +80,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: "Basic salary must be zero or more." }, { status: 400 });
     }
     empUpdate.basicSalary = String(salary);
+  }
+  // Reactivating a deactivated person needs a free seat again.
+  if (body.isActive === true && !emp[0].isActive) {
+    const blocked = await seatBlock(ctx.company!, 1);
+    if (blocked) return NextResponse.json({ error: blocked, code: "SEAT_LIMIT" }, { status: 402 });
   }
   if (typeof body.isActive === "boolean") {
     if (!body.isActive && emp[0].userId === ctx.user.id) {
@@ -117,6 +126,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   await db.transaction(async (tx) => {
     if (Object.keys(userUpdate).length) {
       await tx.update(users).set(userUpdate).where(eq(users.id, emp[0].userId));
+      if (userUpdate.passwordHash) {
+        await tx.delete(sessions).where(eq(sessions.userId, emp[0].userId));
+      }
     }
     if (Object.keys(empUpdate).length) {
       await tx.update(employees).set(empUpdate).where(eq(employees.id, id));
@@ -138,7 +150,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   return NextResponse.json({ ok: true });
 }
 
-export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await getAuth();
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (ctx.user.role !== "company_admin") {
@@ -151,21 +163,48 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   if (!emp[0] || emp[0].companyId !== companyId) {
     return NextResponse.json({ error: "Employee not found." }, { status: 404 });
   }
-
   if (emp[0].userId === ctx.user.id) {
-    return NextResponse.json({ error: "You cannot deactivate your own account." }, { status: 400 });
+    return NextResponse.json({ error: "You cannot remove your own account." }, { status: 400 });
   }
-  await db.update(employees).set({ isActive: false }).where(eq(employees.id, id));
-  await db.update(users).set({ isActive: false }).where(eq(users.id, emp[0].userId));
 
-  await db.insert(auditLogs).values({
-    companyId,
-    actorId: ctx.user.id,
-    action: "employee.deactivate",
-    entity: "employee",
-    entityId: id,
-    details: { fullName: emp[0].id },
+  const permanent = new URL(req.url).searchParams.get("permanent") === "1";
+  if (!permanent) {
+    // Reversible: the employee cannot sign in or punch, and their records stay intact.
+    await db.update(employees).set({ isActive: false }).where(eq(employees.id, id));
+    await db.update(users).set({ isActive: false }).where(eq(users.id, emp[0].userId));
+    await db.insert(auditLogs).values({
+      companyId,
+      actorId: ctx.user.id,
+      action: "employee.deactivate",
+      entity: "employee",
+      entityId: id,
+      details: { employeeId: id },
+    });
+    return NextResponse.json({ ok: true });
+  }
+
+  // Permanent removal erases the person's attendance, leave and salary history. It is allowed only for accounts that
+  // are already deactivated, and only after the admin types the employee's full name.
+  const [user] = await db.select().from(users).where(eq(users.id, emp[0].userId)).limit(1);
+  if (!user) return NextResponse.json({ error: "Employee not found." }, { status: 404 });
+  if (emp[0].isActive || user.isActive) {
+    return NextResponse.json({ error: "Deactivate this employee first. Only deactivated accounts can be deleted permanently." }, { status: 400 });
+  }
+  const body = await req.json().catch(() => ({}));
+  if (String(body.confirmName || "").trim() !== user.fullName) {
+    return NextResponse.json({ error: `Type the employee's full name exactly ("${user.fullName}") to confirm.` }, { status: 400 });
+  }
+
+  await db.transaction(async (tx) => {
+    await removeEmployeeUser(tx, emp[0].userId, emp[0].id);
+    await tx.insert(auditLogs).values({
+      companyId,
+      actorId: ctx.user.id,
+      action: "employee.delete_permanent",
+      entity: "employee",
+      entityId: null,
+      details: { employeeCode: emp[0].employeeCode, fullName: user.fullName },
+    });
   });
-
   return NextResponse.json({ ok: true });
 }

@@ -3,6 +3,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLogs, employees, salaryRecords, salarySlipRequests, users } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
+import { restrictedResponse } from "@/lib/restriction";
 import { addDays, currentCycleKey, dateKey, localWorkDate, SLIP_ACCESS_DAYS } from "@/lib/payroll";
 import { computeMonth } from "@/lib/salary";
 import { breakdownOf } from "@/lib/salary-breakdown";
@@ -24,6 +25,7 @@ export async function GET(req: Request) {
   const ctx = await getAuth();
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (ctx.user.role === "super_admin" || !ctx.company) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (ctx.restricted) return restrictedResponse();
   const companyId = ctx.company.id;
   const now = new Date();
   const runningKey = runningCycle(ctx);

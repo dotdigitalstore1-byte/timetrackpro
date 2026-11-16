@@ -5,6 +5,7 @@ import { auditLogs, managerDepartments, managerLocations, users } from "@/db/sch
 import { getAuth, hashPassword } from "@/lib/auth";
 import { validPermissions } from "@/lib/access";
 import { parseIdList, validateOrgIds } from "@/lib/org";
+import { seatBlock } from "@/lib/billing";
 
 /** Update a manager: details, departments, locations, powers, login status. Admin only. */
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -22,6 +23,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if (typeof body.fullName === "string" && body.fullName.trim()) userUpdate.fullName = body.fullName.trim();
   if (typeof body.phone === "string") userUpdate.phone = body.phone.trim();
   if (Array.isArray(body.permissions)) userUpdate.managerPermissions = validPermissions(body.permissions);
+  if (body.isActive === true && !target.isActive) {
+    const blocked = await seatBlock(ctx.company!, 1);
+    if (blocked) return NextResponse.json({ error: blocked, code: "SEAT_LIMIT" }, { status: 402 });
+  }
   if (typeof body.isActive === "boolean") {
     if (!body.isActive && target.id === ctx.user.id) {
       return NextResponse.json({ error: "You cannot deactivate your own account." }, { status: 400 });

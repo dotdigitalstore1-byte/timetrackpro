@@ -5,6 +5,7 @@ import { auditLogs, departments, geofences, managerDepartments, managerLocations
 import { getAuth, hashPassword } from "@/lib/auth";
 import { scopeEmployeeIds, validPermissions, MANAGER_PERMISSIONS, type Access } from "@/lib/access";
 import { parseIdList, validateOrgIds } from "@/lib/org";
+import { seatBlock } from "@/lib/billing";
 
 /** Managers: the company admin creates them, chooses their departments/locations and the powers they get. */
 export async function GET() {
@@ -93,6 +94,10 @@ export async function POST(req: Request) {
 
   const existing = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
   if (existing.length > 0) return NextResponse.json({ error: "A user with this email already exists." }, { status: 409 });
+
+  // Managers count against the seat limit, the same as employees.
+  const blocked = await seatBlock(ctx.company!, 1);
+  if (blocked) return NextResponse.json({ error: blocked, code: "SEAT_LIMIT" }, { status: 402 });
 
   try {
     const id = await db.transaction(async (tx) => {

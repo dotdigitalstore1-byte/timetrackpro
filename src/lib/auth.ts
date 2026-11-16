@@ -11,9 +11,12 @@ import {
 } from "@/db/schema";
 import type { Company, CompanySettings, Employee, User } from "@/db/schema";
 import { matchesSuperAdminCredentials, readSuperAdminEnv } from "@/lib/super-admin";
+import { accessInfo } from "@/lib/billing-core";
 
 const SESSION_COOKIE = "att_session";
-const SESSION_DAYS = 30;
+// Mobile users stay signed in. 400 days is the longest cookie lifetime browsers accept; sign-out and password
+// resets still revoke sessions immediately.
+const SESSION_DAYS = 400;
 
 export function hashPassword(password: string): string {
   const salt = randomBytes(16).toString("hex");
@@ -92,6 +95,32 @@ export interface AuthContext {
   employee: Employee | null;
   /** The raw session token. Used to sign short-lived punch challenges (see capture-token.ts). Never sent to clients. */
   sessionToken: string;
+  /** The company admin is locked out (trial or paid period ended). Only the billing pages may be used then. */
+  locked: boolean;
+  /** Employees and managers are locked out (trial ended, or the 30-day hard cutoff). */
+  staffLocked: boolean;
+  /** Employee personal history is hidden (5 to 29 days after a paid expiry). Punching still works. */
+  restricted: boolean;
+}
+
+/**
+ * The signed-in session, including companies whose access has lapsed (`locked`).
+ * Use this only for the billing page and the layout redirect. Every other route calls getAuth().
+ */
+export async function getAuthAllowLocked(): Promise<AuthContext | null> {
+  return resolveAuth();
+}
+
+/**
+ * The signed-in user for normal work. Returns null for a locked company, so every API route
+ * refuses access (including historical data) until the company subscribes.
+ */
+export async function getAuth(): Promise<AuthContext | null> {
+  const ctx = await resolveAuth();
+  if (!ctx) return null;
+  // Admins are locked as soon as the company's period ends. Staff keep working through the grace window.
+  const blocked = ctx.user.role === "company_admin" ? ctx.locked : ctx.staffLocked;
+  return blocked ? null : ctx;
 }
 
 /**
@@ -99,7 +128,7 @@ export interface AuthContext {
  * Previously this took three sequential round trips per request, which multiplied latency and database
  * connection use during the morning punch-in spike.
  */
-export async function getAuth(): Promise<AuthContext | null> {
+async function resolveAuth(): Promise<AuthContext | null> {
   const cookieStore = await cookies();
   const token = cookieStore.get(SESSION_COOKIE)?.value;
   if (!token) return null;
@@ -132,17 +161,23 @@ export async function getAuth(): Promise<AuthContext | null> {
     if (!owner || user.email.trim().toLowerCase() !== owner.email) return null;
   }
 
-  if (!user.companyId) return { user, company: null, settings: null, employee: null, sessionToken: token };
+  if (!user.companyId) {
+    return { user, company: null, settings: null, employee: null, sessionToken: token, locked: false, staffLocked: false, restricted: false };
+  }
 
   if (company && company.status !== "active" && user.role !== "super_admin") {
     return null; // suspended / deactivated companies cannot log in
   }
+  const info = company ? accessInfo(company, new Date()) : null;
   return {
     user,
     company: company ?? null,
     settings: settings ?? null,
     employee: user.role === "employee" ? employee ?? null : null,
     sessionToken: token,
+    locked: info?.locked ?? false,
+    staffLocked: info?.staffLocked ?? false,
+    restricted: user.role === "employee" && (info?.restricted ?? false),
   };
 }
 

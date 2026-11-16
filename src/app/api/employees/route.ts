@@ -8,6 +8,7 @@ import { codeOwner, nextEmployeeCode, normaliseCode } from "@/lib/employee-code"
 import { shiftOf } from "@/lib/company";
 import { loadEmployeeOrg, parseIdList, replaceEmployeeOrg, validateOrgIds } from "@/lib/org";
 import { isValidHHMM, parseHHMM } from "@/lib/payroll";
+import { seatBlock } from "@/lib/billing";
 
 export async function GET() {
   const ctx = await getAuth();
@@ -23,7 +24,7 @@ export async function GET() {
     .select()
     .from(employees)
     .innerJoin(users, eq(employees.userId, users.id))
-    .where(eq(employees.companyId, companyId))
+    .where(and(eq(employees.companyId, companyId), eq(users.role, "employee")))
     .orderBy(asc(users.fullName));
   const empRows = allRows.filter((r) => visible.has(r.employees.id));
 
@@ -128,6 +129,10 @@ export async function POST(req: Request) {
   const hireDate = body.hireDate ? new Date(body.hireDate) : new Date();
   if (Number.isNaN(hireDate.getTime())) return NextResponse.json({ error: "Invalid hire date." }, { status: 400 });
   if (!(Number(body.basicSalary) >= 0)) return NextResponse.json({ error: "Basic salary must be zero or more." }, { status: 400 });
+
+  // The trial and each plan include a fixed number of seats (managers included).
+  const blocked = await seatBlock(ctx.company!, 1);
+  if (blocked) return NextResponse.json({ error: blocked, code: "SEAT_LIMIT" }, { status: 402 });
 
   // Two admins adding people at the same moment can be given the same generated code; retry with the next one.
   for (let attempt = 1; attempt <= 3; attempt++) {
