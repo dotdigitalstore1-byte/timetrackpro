@@ -28,6 +28,7 @@ interface Settings {
 }
 
 interface CompanyProfile {
+  code: string | null;
   name: string;
   legalName: string;
   address: string;
@@ -73,6 +74,22 @@ function CompanyProfileCard({ initial, onSaved }: { initial: CompanyProfile; onS
     <Card>
       <h3 className="mb-1 font-bold text-slate-900">Company profile &amp; salary slip branding</h3>
       <p className="mb-3 text-xs text-slate-500">These details and the logo are printed at the top of every salary slip.</p>
+      {initial.code && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 p-4 text-white">
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-indigo-100">Company code</p>
+            <p className="font-mono text-2xl font-bold tracking-widest">{initial.code}</p>
+            <p className="text-xs text-indigo-100">Quote this code when you contact support. It identifies your company uniquely.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigator.clipboard?.writeText(initial.code ?? "")}
+            className="rounded-xl bg-white/15 px-3 py-2 text-xs font-semibold text-white ring-1 ring-white/30 hover:bg-white/25"
+          >
+            Copy code
+          </button>
+        </div>
+      )}
 
       <div className="mb-4">
         <LogoEditor version={logoVersion} />

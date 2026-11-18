@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { getAuthAllowLocked } from "@/lib/auth";
 import { loadPricing, serializeCycle, serializePlan } from "@/lib/billing";
-import { TRIAL_DAYS, TRIAL_EMPLOYEE_LIMIT } from "@/lib/billing-core";
+import { TRIAL_DAYS } from "@/lib/billing-core";
 import PlanPicker from "@/components/PlanPicker";
 
 export const metadata: Metadata = {
@@ -47,7 +47,7 @@ const FEATURES = [
 
 const STEPS = [
   { title: "Create your workspace", body: "Enter your company details and confirm the email code we send you. No card needed." },
-  { title: "Add your team", body: `Start with up to ${TRIAL_EMPLOYEE_LIMIT} people, managers included, for ${TRIAL_DAYS} days.` },
+  { title: "Add your team", body: `Add as many people as you need, managers included, for ${TRIAL_DAYS} days.` },
   { title: "Choose a plan for your headcount", body: "When the trial ends, pick the seat count that fits and the billing length you prefer." },
 ];
 
@@ -62,7 +62,7 @@ const FAQ = [
   },
   {
     q: "What happens when the trial ends?",
-    a: "Access pauses until you choose a plan for your headcount. Subscribing restores access immediately.",
+    a: "Admin access pauses the day the trial ends. Your team can keep punching in and out for five more days while you choose a plan that covers your headcount. After that, access pauses for everyone until you subscribe. Subscribing restores access straight away, and no data is deleted.",
   },
   {
     q: "Can I change plans later?",
@@ -112,7 +112,7 @@ export default async function LandingPage() {
 
         <div className="mx-auto max-w-6xl px-5 pb-16 pt-10 text-center sm:pb-20 sm:pt-20">
           <p className="mx-auto mb-5 inline-flex items-center rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-indigo-100 ring-1 ring-white/20">
-            {TRIAL_DAYS}-day free trial · up to {TRIAL_EMPLOYEE_LIMIT} employees · no credit card
+            {TRIAL_DAYS}-day free trial · unlimited employees · no credit card
           </p>
           <h1 className="mx-auto max-w-3xl text-4xl font-extrabold leading-tight tracking-tight sm:text-6xl">
             Attendance, leave and payroll that your team can trust

@@ -24,3 +24,22 @@ export function cashfreeWebhookSignatureValid(rawBody: string, timestamp: string
   const expected = createHmac("sha256", secretKey).update(timestamp + rawBody).digest("base64");
   return safeEqual(expected, signature);
 }
+
+/**
+ * True when a configuration value is a real secret. Placeholders copied from the example file (YOUR_RAZORPAY_KEY,
+ * change-me-...) count as not configured, so the app never calls the gateway with them.
+ */
+export function isRealSecret(value: string | undefined | null): boolean {
+  const v = (value ?? "").trim();
+  if (!v) return false;
+  if (/^your[_-]/i.test(v) || /^change[-_]me/i.test(v)) return false;
+  return true;
+}
+
+export type RefundOutcome = "none" | "partial" | "full";
+
+/** How much of a captured payment has been returned. Amounts in paise (Razorpay's unit) or any one consistent unit. */
+export function refundOutcome(capturedAmount: number, refundedAmount: number): RefundOutcome {
+  if (!(refundedAmount > 0)) return "none";
+  return refundedAmount >= capturedAmount ? "full" : "partial";
+}

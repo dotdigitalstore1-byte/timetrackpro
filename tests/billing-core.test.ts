@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   accessInfo,
+  validateGracePolicy,
+  type GracePolicy,
   addMonths,
   canSelfActivate,
   DEFAULT_PLANS,
@@ -32,7 +34,6 @@ test("launch price list matches the agreed tiers", () => {
 
 test("trial is 20 days and 4 seats", () => {
   assert.equal(TRIAL_DAYS, 20);
-  assert.equal(TRIAL_EMPLOYEE_LIMIT, 4);
 });
 
 test("a monthly quote with no discount is the list price", () => {
@@ -74,7 +75,15 @@ test("tierFor picks the smallest plan that covers the headcount", () => {
   assert.equal(tierFor(plans, 1)?.employeeLimit, 1);
   assert.equal(tierFor(plans, 6)?.employeeLimit, 10);
   assert.equal(tierFor(plans, 50)?.employeeLimit, 50);
-  assert.equal(tierFor(plans, 101), null);
+  assert.equal(tierFor(plans, 101)?.employeeLimit, 200);
+  assert.equal(tierFor(plans, 201)?.employeeLimit, 400);
+  assert.equal(tierFor(plans, 401)?.employeeLimit, 600);
+  assert.equal(tierFor(plans, 600)?.employeeLimit, 600);
+  assert.equal(tierFor(plans, 601), null, "above the largest tier needs a custom quote");
+  assert.deepEqual(
+    DEFAULT_PLANS.filter((p) => p.employeeLimit >= 200).map((p) => p.employeeLimit),
+    [200, 400, 600]
+  );
 });
 
 test("trial company is open, shows days left and is locked after the window", () => {
@@ -154,24 +163,65 @@ test("billing cycle input: months 1 to 36 and discount 0 to 90", () => {
   assert.equal(r.ok && r.value.label, "12 months");
 });
 
-test("grace phases after a paid expiry: grace, blurred (5-29 days), cutoff (30+)", () => {
+test("grace phases after a paid expiry with the default policy (blur 5, punching until 20, block 30)", () => {
   const now = new Date("2026-11-16T00:00:00Z");
-  const at = (days: number) => accessInfo({ accessUntil: new Date(now.getTime() - days * DAY - 1000), subscriptionStatus: "active", employeeLimit: 5 }, now);
+  const at = (days: number, policy?: GracePolicy) =>
+    accessInfo({ accessUntil: new Date(now.getTime() - days * DAY - 1000), subscriptionStatus: "active", employeeLimit: 5 }, now, policy);
   assert.equal(at(4).phase, "grace");
+  assert.equal(at(4).locked, true, "admin is locked from the first day");
+  assert.equal(at(4).staffLocked, false);
   assert.equal(at(5).phase, "blurred");
   assert.equal(at(5).restricted, true);
-  assert.equal(at(5).staffLocked, false); // staff can still punch while blurred
-  assert.equal(at(29).phase, "blurred");
+  assert.equal(at(5).staffLocked, false, "staff can still punch while blurred");
+  assert.equal(at(19).phase, "blurred");
+  assert.equal(at(20).phase, "punch_closed");
+  assert.equal(at(20).staffLocked, true, "punching closes on day 20");
+  assert.equal(at(29).phase, "punch_closed");
   assert.equal(at(30).phase, "cutoff");
   assert.equal(at(30).staffLocked, true);
   assert.equal(at(30).locked, true);
 });
 
-test("trial expiry locks staff immediately (no grace on trials)", () => {
+test("grace phases follow an edited policy", () => {
   const now = new Date("2026-11-16T00:00:00Z");
-  const t = accessInfo({ accessUntil: new Date(now.getTime() - DAY), subscriptionStatus: "trial", employeeLimit: 4 }, now);
-  assert.equal(t.phase, "trial_expired");
-  assert.equal(t.staffLocked, true);
+  const policy = { blurAfterDays: 2, punchUntilDays: 7, blockAfterDays: 10 };
+  const at = (days: number) =>
+    accessInfo({ accessUntil: new Date(now.getTime() - days * DAY - 1000), subscriptionStatus: "active", employeeLimit: 5 }, now, policy);
+  assert.equal(at(1).phase, "grace");
+  assert.equal(at(2).phase, "blurred");
+  assert.equal(at(7).phase, "punch_closed");
+  assert.equal(at(9).phase, "punch_closed");
+  assert.equal(at(10).phase, "cutoff");
+});
+
+test("grace policy: whole numbers, in order, within the range", () => {
+  assert.equal(validateGracePolicy({ blurAfterDays: 5, punchUntilDays: 20, blockAfterDays: 30 }).ok, true);
+  assert.equal(validateGracePolicy({ blurAfterDays: 0, punchUntilDays: 0, blockAfterDays: 0 }).ok, true);
+  assert.equal(validateGracePolicy({ blurAfterDays: "5", punchUntilDays: "20", blockAfterDays: "30" }).ok, true);
+  assert.equal(validateGracePolicy({ blurAfterDays: 5, punchUntilDays: 20 }).ok, false, "missing limit");
+  assert.equal(validateGracePolicy({ blurAfterDays: 5.5, punchUntilDays: 20, blockAfterDays: 30 }).ok, false, "fraction");
+  assert.equal(validateGracePolicy({ blurAfterDays: -1, punchUntilDays: 20, blockAfterDays: 30 }).ok, false, "negative");
+  assert.equal(validateGracePolicy({ blurAfterDays: 5, punchUntilDays: 20, blockAfterDays: 400 }).ok, false, "too large");
+  assert.equal(validateGracePolicy({ blurAfterDays: 25, punchUntilDays: 20, blockAfterDays: 30 }).ok, false, "out of order");
+  assert.equal(validateGracePolicy({ blurAfterDays: 5, punchUntilDays: 31, blockAfterDays: 30 }).ok, false, "block before punching stops");
+});
+
+test("trial expiry: admin locked at once; staff punch for five days with history hidden; full lock from day five", () => {
+  const now = new Date("2026-11-16T00:00:00Z");
+  const at = (days: number) =>
+    accessInfo({ accessUntil: new Date(now.getTime() - days * DAY - 1000), subscriptionStatus: "trial", employeeLimit: null }, now);
+  assert.equal(at(0).locked, true, "admin is locked on the first day after the trial");
+  assert.equal(at(0).endedAs, "trial");
+  assert.equal(at(0).staffLocked, false, "staff can still punch");
+  assert.equal(at(0).restricted, true, "staff history is hidden");
+  assert.equal(at(4).staffLocked, false);
+  assert.equal(at(4).phase, "blurred");
+  assert.equal(at(5).staffLocked, true, "full lockout from the fifth day");
+  assert.equal(at(5).phase, "cutoff");
+});
+
+test("trial has no employee cap", () => {
+  assert.equal(TRIAL_EMPLOYEE_LIMIT, null);
 });
 
 test("minor-unit conversion for payment gateways", () => {

@@ -7,6 +7,7 @@ import { hashPassword } from "@/lib/auth";
 import { startTrialTx } from "@/lib/billing";
 import { isValidTimezone } from "@/lib/payroll";
 import { OtpDeliveryError, deliverOtp, type OtpDelivery } from "@/lib/mailer";
+import { generateCompanyCode } from "@/lib/company-code-core";
 import {
   OTP_MAX_ATTEMPTS,
   OTP_RESEND_SECONDS,
@@ -104,7 +105,7 @@ export async function completeRegistration(
     const created = await db.transaction(async (tx) => {
       const [company] = await tx
         .insert(companies)
-        .values({ name: payload.companyName, email, phone: payload.phone })
+        .values({ name: payload.companyName, email, phone: payload.phone, code: generateCompanyCode() })
         .returning();
       await tx.insert(companySettings).values({ companyId: company.id, timezone: payload.timezone });
       await startTrialTx(tx, company.id, now);

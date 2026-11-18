@@ -4,6 +4,7 @@ import { companies, companyBranding } from "@/db/schema";
 
 /** Company details printed on salary slips. Maintained under Settings → Company profile. */
 export interface CompanyProfile {
+  code: string | null; // unique company code, e.g. CO-7K3D-9PMQ
   name: string;
   legalName: string;
   address: string;
@@ -19,6 +20,7 @@ export async function loadCompanyProfile(companyId: string): Promise<CompanyProf
   const [c] = await db.select().from(companies).where(eq(companies.id, companyId)).limit(1);
   const [b] = await db.select().from(companyBranding).where(eq(companyBranding.companyId, companyId)).limit(1);
   return {
+    code: c?.code ?? null,
     name: c?.name ?? "",
     legalName: c?.legalName ?? "",
     address: c?.address ?? "",

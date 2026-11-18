@@ -1,12 +1,18 @@
 // Payment gateway integration (Razorpay and Cashfree). The server decides the price, creates the order, confirms
 // payment with the gateway, and activates the plan exactly once, whether the browser or the webhook arrives first.
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
-import { billingCycles, companies, payments, plans, users } from "@/db/schema";
+import { billingCycles, companies, payments, platformEvents, plans, subscriptions, users } from "@/db/schema";
 import type { Plan } from "@/db/schema";
 import { activatePlan, seatsUsed } from "@/lib/billing";
 import { quoteCycle, toMinorUnits } from "@/lib/billing-core";
-import { cashfreeWebhookSignatureValid, razorpayPaymentSignatureValid, razorpayWebhookSignatureValid } from "@/lib/payments-core";
+import {
+  cashfreeWebhookSignatureValid,
+  isRealSecret,
+  razorpayPaymentSignatureValid,
+  razorpayWebhookSignatureValid,
+  refundOutcome,
+} from "@/lib/payments-core";
 
 export type Provider = "razorpay" | "cashfree";
 
@@ -17,11 +23,16 @@ export class PaymentError extends Error {
 }
 
 /** The gateway in use, or null when none is configured with keys (then checkout is hidden). */
+// Placeholder values (YOUR_RAZORPAY_KEY, ...) count as not configured, so checkout stays hidden until real keys are set.
 export function activeProvider(env: Record<string, string | undefined> = process.env): Provider | null {
   const chosen = (env.PAYMENT_PROVIDER || "").toLowerCase();
-  if (chosen === "razorpay" && env.RAZORPAY_KEY_ID && env.RAZORPAY_KEY_SECRET) return "razorpay";
-  if (chosen === "cashfree" && env.CASHFREE_APP_ID && env.CASHFREE_SECRET_KEY) return "cashfree";
+  if (chosen === "razorpay" && isRealSecret(env.RAZORPAY_KEY_ID) && isRealSecret(env.RAZORPAY_KEY_SECRET)) return "razorpay";
+  if (chosen === "cashfree" && isRealSecret(env.CASHFREE_APP_ID) && isRealSecret(env.CASHFREE_SECRET_KEY)) return "cashfree";
   return null;
+}
+
+function razorpayAuth(): string {
+  return `Basic ${Buffer.from(`${process.env.RAZORPAY_KEY_ID}:${process.env.RAZORPAY_KEY_SECRET}`).toString("base64")}`;
 }
 
 function cashfreeBase(): string {
@@ -251,21 +262,121 @@ export async function confirmCheckout(args: {
   return (await fulfill(row.id, null, Number(order.order_amount))) === "paid" ? "paid" : "already_paid";
 }
 
-/** Razorpay webhook. Returns false when the signature is wrong. Unknown or unrelated events are acknowledged and ignored. */
+type RazorpayEvent = {
+  event?: string;
+  payload?: {
+    payment?: { entity?: { id: string; order_id: string; amount: number; status: string } };
+    refund?: { entity?: { id: string; payment_id: string; amount: number } };
+  };
+};
+
+/**
+ * Razorpay webhook. Returns false when the signature is wrong. Handles the payment lifecycle:
+ *  - payment.captured  : the payment succeeded, so the plan is activated (once).
+ *  - payment.failed    : the attempt failed, so the pending payment is marked failed.
+ *  - refund.processed  : money went back. A full refund ends the plan's access at once; a partial one is only recorded.
+ * Other events are acknowledged and ignored.
+ */
 export async function handleRazorpayWebhook(rawBody: string, signature: string): Promise<boolean> {
   const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
-  if (!secret || !razorpayWebhookSignatureValid(rawBody, signature, secret)) return false;
-  const event = JSON.parse(rawBody) as { event?: string; payload?: { payment?: { entity?: { id: string; order_id: string; amount: number; status: string } } } };
-  if (event.event !== "payment.captured") return true;
-  const entity = event.payload?.payment?.entity;
-  if (!entity) return true;
+  if (!isRealSecret(secret) || !razorpayWebhookSignatureValid(rawBody, signature, secret ?? "")) return false;
+  const event = JSON.parse(rawBody) as RazorpayEvent;
+
+  if (event.event === "payment.captured") {
+    const entity = event.payload?.payment?.entity;
+    if (!entity) return true;
+    const [row] = await db
+      .select()
+      .from(payments)
+      .where(and(eq(payments.provider, "razorpay"), eq(payments.providerOrderId, entity.order_id)))
+      .limit(1);
+    if (row) await fulfill(row.id, entity.id, entity.amount / 100);
+    return true;
+  }
+
+  if (event.event === "payment.failed") {
+    const entity = event.payload?.payment?.entity;
+    if (!entity) return true;
+    // Only a payment that never succeeded can fail. A paid row is never downgraded to failed.
+    await db
+      .update(payments)
+      .set({ status: "failed" })
+      .where(
+        and(
+          eq(payments.provider, "razorpay"),
+          eq(payments.providerOrderId, entity.order_id),
+          eq(payments.status, "created")
+        )
+      );
+    return true;
+  }
+
+  if (event.event === "refund.processed") {
+    const refund = event.payload?.refund?.entity;
+    if (refund?.payment_id) await applyRazorpayRefund(refund.payment_id);
+    return true;
+  }
+
+  return true;
+}
+
+/** Reads the payment from Razorpay and updates our record: full refunds revoke access, partial refunds are logged. */
+async function applyRazorpayRefund(providerPaymentId: string): Promise<void> {
   const [row] = await db
     .select()
     .from(payments)
-    .where(and(eq(payments.provider, "razorpay"), eq(payments.providerOrderId, entity.order_id)))
+    .where(and(eq(payments.provider, "razorpay"), eq(payments.providerPaymentId, providerPaymentId)))
     .limit(1);
-  if (row) await fulfill(row.id, entity.id, entity.amount / 100);
-  return true;
+  if (!row || row.status === "refunded") return; // unknown, or already handled
+
+  const res = await fetch(`https://api.razorpay.com/v1/payments/${encodeURIComponent(providerPaymentId)}`, {
+    headers: { Authorization: razorpayAuth() },
+    signal: AbortSignal.timeout(15_000),
+  });
+  const payment = await gatewayJson(res, "fetch payment for refund");
+  const captured = Number(payment.amount) || 0;
+  const refunded = Number(payment.amount_refunded) || 0;
+  const outcome = refundOutcome(captured, refunded);
+  if (outcome === "none") return;
+
+  if (outcome === "partial") {
+    await db.update(payments).set({ status: "partially_refunded" }).where(eq(payments.id, row.id));
+    await logPaymentEvent("payment.partially_refunded", row, { refundedRupees: refunded / 100 });
+    return;
+  }
+
+  // Full refund: the company loses access now. Only the plan that was refunded is revoked: if the company has since
+  // bought a newer plan that is still valid, refunding an older payment must not take that plan away.
+  await db.update(payments).set({ status: "refunded" }).where(eq(payments.id, row.id));
+  const [latestActivated] = await db
+    .select({ id: payments.id })
+    .from(payments)
+    .where(and(eq(payments.companyId, row.companyId), inArray(payments.status, ["paid", "refunded", "partially_refunded"])))
+    .orderBy(desc(payments.paidAt))
+    .limit(1);
+  if (latestActivated && latestActivated.id !== row.id) {
+    await logPaymentEvent("payment.refunded_older", row, { note: "a newer plan is in place, so access is unchanged" });
+    return;
+  }
+  await db
+    .update(companies)
+    .set({ accessUntil: new Date(), subscriptionPlan: "refunded" })
+    .where(eq(companies.id, row.companyId));
+  await db
+    .update(subscriptions)
+    .set({ status: "refunded" })
+    .where(and(eq(subscriptions.companyId, row.companyId), eq(subscriptions.status, "active")));
+  await logPaymentEvent("payment.refunded", row, { refundedRupees: refunded / 100, accessEndedNow: true });
+}
+
+async function logPaymentEvent(action: string, row: { id: string; companyId: string; amount: string }, details: Record<string, unknown>) {
+  const [company] = await db.select({ name: companies.name }).from(companies).where(eq(companies.id, row.companyId)).limit(1);
+  await db.insert(platformEvents).values({
+    action,
+    companyId: row.companyId,
+    companyName: company?.name ?? null,
+    details: { paymentId: row.id, amountRupees: Number(row.amount), ...details },
+  });
 }
 
 /** Cashfree webhook. Returns false when the signature is wrong. */

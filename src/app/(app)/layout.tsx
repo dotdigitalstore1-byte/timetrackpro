@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 import { getAuthAllowLocked } from "@/lib/auth";
+import { loadGracePolicy } from "@/lib/grace-policy";
 import { loadAccess } from "@/lib/access";
 import { loadLogoVersion } from "@/lib/company-profile";
 import { accessInfo } from "@/lib/billing-core";
@@ -25,7 +26,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   const access = await loadAccess(ctx);
   const logoVersion = ctx.company ? await loadLogoVersion(ctx.company.id) : null;
 
-  const info = ctx.company ? accessInfo(ctx.company, new Date()) : null;
+  const info = ctx.company ? accessInfo(ctx.company, new Date(), await loadGracePolicy()) : null;
   const showTrial = info?.state === "trial" && ctx.user.role === "company_admin";
 
   return (

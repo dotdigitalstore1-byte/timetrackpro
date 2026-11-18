@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { and, count, desc, eq, gte, lt } from "drizzle-orm";
 import { db } from "@/db";
-import { attendance, companies, companySettings, employees, platformEvents, plans, subscriptions, users } from "@/db/schema";
+import { attendance, companies, companySettings, employees, platformEvents, platformSettings, plans, subscriptions, users } from "@/db/schema";
 import { getAuth, hashPassword } from "@/lib/auth";
 import { activatePlan, startTrialTx } from "@/lib/billing";
-import { validateCycleInput } from "@/lib/billing-core";
+import { validateCycleInput, validateGracePolicy, DEFAULT_GRACE_POLICY } from "@/lib/billing-core";
+import { generateCompanyCode } from "@/lib/company-code-core";
+import { clearGracePolicyCache, loadGracePolicy } from "@/lib/grace-policy";
 
 export async function GET() {
   const ctx = await getAuth();
@@ -34,6 +36,7 @@ export async function GET() {
   const presentToday = new Set(todayAttendance.filter((a) => a.punchInTime).map((a) => a.companyId)).size;
 
   const totalEmployees = companyRows.reduce((s, r) => s + Number(r.employeeCount), 0);
+  const gracePolicy = await loadGracePolicy();
 
   return NextResponse.json({
     stats: {
@@ -42,8 +45,10 @@ export async function GET() {
       totalEmployees,
       presentCompaniesToday: presentToday,
     },
+    gracePolicy,
     companies: companyRows.map((r) => ({
       id: r.company.id,
+      code: r.company.code,
       name: r.company.name,
       email: r.company.email,
       phone: r.company.phone,
@@ -73,6 +78,33 @@ export async function POST(req: Request) {
 
   const body = await req.json();
   const action = String(body.action || "");
+
+  if (action === "updateGracePolicy") {
+    // Platform-wide: how many days after a paid period ends that history is hidden, punching stops, and access is blocked.
+    const checked = validateGracePolicy(body);
+    if (!checked.ok) return NextResponse.json({ error: checked.error }, { status: 400 });
+    const before = await loadGracePolicy();
+    const values = {
+      graceBlurAfterDays: checked.value.blurAfterDays,
+      gracePunchUntilDays: checked.value.punchUntilDays,
+      graceBlockAfterDays: checked.value.blockAfterDays,
+      updatedAt: new Date(),
+      updatedBy: ctx.user.id,
+    };
+    await db.transaction(async (tx) => {
+      await tx
+        .insert(platformSettings)
+        .values({ id: 1, ...values })
+        .onConflictDoUpdate({ target: platformSettings.id, set: values });
+      await tx.insert(platformEvents).values({
+        action: "platform.grace_policy_changed",
+        actorId: ctx.user.id,
+        details: { before, after: checked.value },
+      });
+    });
+    clearGracePolicyCache();
+    return NextResponse.json({ ok: true, gracePolicy: checked.value, defaults: DEFAULT_GRACE_POLICY });
+  }
 
   if (action === "updateCompany") {
     const companyId = String(body.companyId || "");
@@ -156,7 +188,7 @@ export async function POST(req: Request) {
 
     // Same starting point as self sign-up: a 20-day trial with the trial seat limit.
     const companyId = await db.transaction(async (tx) => {
-      const [comp] = await tx.insert(companies).values({ name, email }).returning();
+      const [comp] = await tx.insert(companies).values({ name, email, code: generateCompanyCode() }).returning();
       await tx.insert(companySettings).values({ companyId: comp.id });
       await startTrialTx(tx, comp.id);
       await tx

@@ -5,9 +5,12 @@ import Link from "next/link";
 import { api } from "@/lib/client";
 import { Badge, Button, Card, Input, Modal, PageHeader, Select, Spinner, StatCard } from "@/components/ui";
 import { formatDate, formatNumber } from "@/lib/utils";
+import { normalizeCompanyCode } from "@/lib/company-code-core";
+import { DEFAULT_GRACE_POLICY, type GracePolicy } from "@/lib/billing-core";
 
 interface CompanyRow {
   id: string;
+  code: string | null;
   name: string;
   email: string | null;
   phone: string | null;
@@ -56,6 +59,10 @@ export default function SuperAdminPage() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const [notice, setNotice] = useState("");
+  const [grace, setGrace] = useState<GracePolicy | null>(null);
+  const [graceDraft, setGraceDraft] = useState({ blurAfterDays: "", punchUntilDays: "", blockAfterDays: "" });
+  const [graceSaving, setGraceSaving] = useState(false);
+  const [graceError, setGraceError] = useState("");
 
   const [form, setForm] = useState({ name: "", email: "", password: "" });
   const [plans, setPlans] = useState<{ id: string; name: string; employeeLimit: number }[]>([]);
@@ -66,9 +73,15 @@ export default function SuperAdminPage() {
   const load = useCallback(async () => {
     setLoadError("");
     try {
-      const data = await api<{ stats: Stats; companies: CompanyRow[] }>("/api/superadmin");
+      const data = await api<{ stats: Stats; companies: CompanyRow[]; gracePolicy: GracePolicy }>("/api/superadmin");
       setStats(data.stats);
       setCompanies(data.companies);
+      setGrace(data.gracePolicy);
+      setGraceDraft({
+        blurAfterDays: String(data.gracePolicy.blurAfterDays),
+        punchUntilDays: String(data.gracePolicy.punchUntilDays),
+        blockAfterDays: String(data.gracePolicy.blockAfterDays),
+      });
     } catch (e) {
       setCompanies([]);
       setLoadError(e instanceof Error ? e.message : "Could not load platform data");
@@ -152,10 +165,31 @@ export default function SuperAdminPage() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return companies;
+    // A typed company code ("co 7k3d9pmq") matches exactly, whatever the spacing or case.
+    const code = normalizeCompanyCode(search);
+    if (code) return companies.filter((c) => c.code === code);
     return companies.filter((c) =>
-      [c.name, c.email, c.subscriptionPlan, c.status].filter(Boolean).some((v) => String(v).toLowerCase().includes(q))
+      [c.name, c.email, c.code, c.subscriptionPlan, c.status].filter(Boolean).some((v) => String(v).toLowerCase().includes(q))
     );
   }, [companies, search]);
+
+  const saveGrace = async () => {
+    setGraceSaving(true);
+    setGraceError("");
+    try {
+      const data = await api<{ gracePolicy: GracePolicy }>("/api/superadmin", {
+        method: "POST",
+        body: JSON.stringify({ action: "updateGracePolicy", ...graceDraft }),
+      });
+      setGrace(data.gracePolicy);
+      setNotice("Grace periods saved. The new limits apply to every company within about a minute.");
+    } catch (e) {
+      setGraceError(e instanceof Error ? e.message : "Could not save the grace periods");
+    } finally {
+      setGraceSaving(false);
+    }
+  };
+
 
   return (
     <div>
@@ -190,8 +224,34 @@ export default function SuperAdminPage() {
             <StatCard label="Companies with punches today" value={stats.presentCompaniesToday} tone="amber" />
           </div>
 
+          <Card className="mt-4">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <h3 className="font-bold text-slate-900">Grace periods after a paid plan ends</h3>
+                <p className="mt-1 text-xs leading-relaxed text-slate-500">
+                  The company admin is locked out as soon as a paid period ends. Staff keep working for these limits, counted in days after the end date.
+                </p>
+              </div>
+              {grace && (
+                <p className="text-[11px] font-semibold text-slate-400">
+                  Current: hide history from day {grace.blurAfterDays} · stop punching on day {grace.punchUntilDays} · full block on day {grace.blockAfterDays}
+                </p>
+              )}
+            </div>
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <Input label="Hide history from day" type="number" value={graceDraft.blurAfterDays} onChange={(v) => setGraceDraft({ ...graceDraft, blurAfterDays: v })} />
+              <Input label="Stop punching on day" type="number" value={graceDraft.punchUntilDays} onChange={(v) => setGraceDraft({ ...graceDraft, punchUntilDays: v })} />
+              <Input label="Full block on day" type="number" value={graceDraft.blockAfterDays} onChange={(v) => setGraceDraft({ ...graceDraft, blockAfterDays: v })} />
+            </div>
+            <p className="mt-2 text-[11px] text-slate-400">
+              Defaults: {DEFAULT_GRACE_POLICY.blurAfterDays}, {DEFAULT_GRACE_POLICY.punchUntilDays} and {DEFAULT_GRACE_POLICY.blockAfterDays} days. Each limit must be the same as or later than the one before it.
+            </p>
+            {graceError && <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">{graceError}</p>}
+            <Button size="sm" className="mt-3 w-full sm:w-auto" loading={graceSaving} onClick={saveGrace}>Save grace periods</Button>
+          </Card>
+
           <Card className="mt-4 p-3">
-            <Input value={search} onChange={setSearch} placeholder="Search companies by name, email, plan or status..." />
+            <Input value={search} onChange={setSearch} placeholder="Search by company code, name, email, plan or status..." />
             <p className="mt-2 px-1 text-[11px] font-medium text-slate-400">
               Showing {filtered.length} of {companies.length} {companies.length === 1 ? "company" : "companies"}
             </p>
@@ -219,6 +279,7 @@ export default function SuperAdminPage() {
                       <tr key={c.id} className="hover:bg-slate-50/60">
                         <td className="px-4 py-3">
                           <p className="font-bold text-slate-800">{c.name}</p>
+                          <p className="font-mono text-[11px] font-semibold tracking-wider text-indigo-600">{c.code ?? "no code"}</p>
                           <p className="text-xs text-slate-400">{c.email}</p>
                         </td>
                         <td className="px-4 py-3">
@@ -248,6 +309,7 @@ export default function SuperAdminPage() {
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="truncate font-bold text-slate-800">{c.name}</p>
+                        <p className="font-mono text-[11px] font-semibold tracking-wider text-indigo-600">{c.code ?? "no code"}</p>
                         <p className="truncate text-xs text-slate-400">{c.email}</p>
                       </div>
                       <Badge tone={c.status === "active" ? "green" : c.status === "suspended" ? "amber" : "red"}>{c.status}</Badge>
@@ -293,6 +355,10 @@ export default function SuperAdminPage() {
       {editCompany && (
         <Modal open onClose={closeManage} title={`Manage ${editCompany.name}`}>
           <div className="space-y-4">
+            <div className="rounded-xl bg-indigo-50 px-4 py-3">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-indigo-500">Company code</p>
+              <p className="font-mono text-lg font-bold tracking-widest text-indigo-900">{editCompany.code ?? "Not assigned"}</p>
+            </div>
             <Select
               label="Status"
               value={editCompany.status}

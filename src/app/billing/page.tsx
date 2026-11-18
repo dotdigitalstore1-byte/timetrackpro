@@ -24,7 +24,7 @@ interface BillingData {
   cycles: CycleView[];
   canSelfActivate: boolean;
   paymentProvider: "razorpay" | "cashfree" | null;
-  trial: { days: number; employeeLimit: number };
+  trial: { days: number; employeeLimit: number | null };
 }
 
 interface CheckoutOrder {
@@ -56,7 +56,7 @@ function statusCopy(d: BillingData): { tone: Tone; title: string; body: string }
     return {
       tone: "amber",
       title: `Free trial: ${access.daysLeft} ${access.daysLeft === 1 ? "day" : "days"} left`,
-      body: `Your trial includes up to ${trial.employeeLimit} people, managers included. Choose a plan before it ends to keep going without a pause.`,
+      body: `Your trial has no employee limit, managers included. Choose a plan that covers your headcount before it ends to keep going without a pause.`,
     };
   }
   if (access.state === "active") {

@@ -108,16 +108,22 @@ function SeatSlider({ plans, index, onChange, headcount }: { plans: PlanView[]; 
         className="mt-4 h-2 w-full cursor-pointer appearance-none rounded-full bg-indigo-100 accent-indigo-600"
       />
       <div className="mt-2 flex justify-between gap-0.5 text-[10px] font-semibold text-slate-400 sm:text-[11px]">
-        {plans.map((p, i) => (
-          <button
-            key={p.id}
-            type="button"
-            onClick={() => onChange(i)}
-            className={`min-w-0 flex-1 py-1 text-center ${i === index ? "text-indigo-700" : ""} ${headcount !== undefined && p.employeeLimit < headcount ? "line-through opacity-60" : ""}`}
-          >
-            {p.employeeLimit}
-          </button>
-        ))}
+        {plans.map((p, i) => {
+          // With many tiers, phones show every other number (plus the selected and the last one) so the row stays readable.
+          // Every stop remains a tap target.
+          const showLabel = plans.length <= 7 || i % 2 === 0 || i === index || i === plans.length - 1;
+          return (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => onChange(i)}
+              aria-label={`${p.employeeLimit} employees`}
+              className={`min-w-0 flex-1 py-1 text-center ${i === index ? "text-indigo-700" : ""} ${headcount !== undefined && p.employeeLimit < headcount ? "line-through opacity-60" : ""}`}
+            >
+              <span className={showLabel ? "" : "hidden sm:inline"}>{p.employeeLimit}</span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );

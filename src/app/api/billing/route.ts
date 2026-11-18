@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getAuthAllowLocked } from "@/lib/auth";
 import { loadPricing, seatsUsed, serializeCycle, serializePlan } from "@/lib/billing";
 import { accessInfo, canSelfActivate, TRIAL_DAYS, TRIAL_EMPLOYEE_LIMIT } from "@/lib/billing-core";
+import { loadGracePolicy } from "@/lib/grace-policy";
 import { activeProvider } from "@/lib/payments";
 
 /** Billing status for the signed-in company. Also works while the company is locked, so people can subscribe. */
@@ -11,7 +12,7 @@ export async function GET() {
   if (!ctx.company) return NextResponse.json({ error: "No company is linked to this account." }, { status: 404 });
 
   const company = ctx.company;
-  const access = accessInfo(company, new Date());
+  const access = accessInfo(company, new Date(), await loadGracePolicy());
   const isAdmin = ctx.user.role === "company_admin";
   const pricing = await loadPricing();
 

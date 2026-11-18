@@ -3,7 +3,18 @@
 
 export const DAY_MS = 86_400_000;
 export const TRIAL_DAYS = 20;
-export const TRIAL_EMPLOYEE_LIMIT = 4;
+/** Trials have no employee cap. The company must choose a plan that covers its real headcount before the trial ends. */
+export const TRIAL_EMPLOYEE_LIMIT: number | null = null;
+
+/** Shown to employees when their personal history or the app is locked. Names who can help. */
+export const CONTACT_ADMIN_MESSAGE =
+  "Your company's subscription has ended, so these details are hidden for now. Please contact your Company Admin, Owner or Reporting Manager to restore access.";
+
+/**
+ * After a trial ends: the admin is locked at once, staff can keep punching for five days (their history is hidden from
+ * the first day), and the app is fully locked from day five. Fixed by the product rules, not by the platform settings.
+ */
+export const TRIAL_GRACE_POLICY: GracePolicy = { blurAfterDays: 0, punchUntilDays: 5, blockAfterDays: 5 };
 
 /** Every feature ships on every plan. The only thing a plan limits is the number of seats. */
 export const PLATFORM_FEATURES = [
@@ -31,6 +42,9 @@ export const DEFAULT_PLANS: { name: string; employeeLimit: number; price: number
   { name: "Team 30", employeeLimit: 30, price: 2499 },
   { name: "Business 50", employeeLimit: 50, price: 2999 },
   { name: "Business 100", employeeLimit: 100, price: 7999 },
+  { name: "Business 200", employeeLimit: 200, price: 13999 },
+  { name: "Business 400", employeeLimit: 400, price: 24999 },
+  { name: "Business 600", employeeLimit: 600, price: 34999 },
 ];
 
 /** Discounts for longer commitments. Assumed starting values; the platform admin changes them. */
@@ -97,29 +111,63 @@ export function tierFor<T extends { employeeLimit: number }>(plans: T[], headcou
 
 // ---------------------------------------------------------------- access
 
-/** Staff keep punching for the whole grace window. Their history is hidden from day 5, and access ends on day 30. */
-export const GRACE_BLUR_AFTER_DAYS = 5;
-export const HARD_CUTOFF_DAYS = 30;
+/**
+ * Grace policy after a paid period ends, in whole days. The platform admin edits these in Platform settings.
+ *  - blurAfterDays:       from this day the employees' personal history is hidden (they can still punch).
+ *  - punchUntilDays:      staff can punch until this day. From here on they are locked out of punching too.
+ *  - blockAfterDays:      full block. Nobody can use the app.
+ * The admin is locked out from the first day of expiry, whatever the policy says.
+ */
+export interface GracePolicy {
+  blurAfterDays: number;
+  punchUntilDays: number;
+  blockAfterDays: number;
+}
+
+export const DEFAULT_GRACE_POLICY: GracePolicy = { blurAfterDays: 5, punchUntilDays: 20, blockAfterDays: 30 };
+export const MAX_GRACE_DAYS = 365;
+
+/** Checks an edited policy. The day limits must be whole numbers and must not overlap (blur <= punch <= block). */
+export function validateGracePolicy(body: Body): Result<GracePolicy> {
+  const raw = [body.blurAfterDays, body.punchUntilDays, body.blockAfterDays];
+  if (raw.some((v) => v === undefined || v === null || String(v).trim() === "")) {
+    return { ok: false, error: "Enter all three grace limits." };
+  }
+  const [blurAfterDays, punchUntilDays, blockAfterDays] = raw.map((v) => Number(v));
+  if (![blurAfterDays, punchUntilDays, blockAfterDays].every(Number.isInteger)) {
+    return { ok: false, error: "Each grace limit must be a whole number of days." };
+  }
+  if ([blurAfterDays, punchUntilDays, blockAfterDays].some((v) => v < 0 || v > MAX_GRACE_DAYS)) {
+    return { ok: false, error: `Grace limits must be between 0 and ${MAX_GRACE_DAYS} days.` };
+  }
+  if (!(blurAfterDays <= punchUntilDays && punchUntilDays <= blockAfterDays)) {
+    return {
+      ok: false,
+      error: "The limits must be in order: history hidden on or before punching stops, and punching stops on or before the full block.",
+    };
+  }
+  return { ok: true, value: { blurAfterDays, punchUntilDays, blockAfterDays } };
+}
 
 export type AccessState = "trial" | "active" | "legacy" | "expired";
 
 /**
  * trial / active / legacy : normal operation.
- * trial_expired          : trial ended. Everyone is locked out until the company subscribes (no grace on trials).
- * grace                  : a paid period ended less than 5 days ago. Admin is locked out; staff carry on as normal.
- * blurred                : 5 to 29 days after a paid expiry. Staff can still punch; their history is hidden.
- * cutoff                 : 30+ days after a paid expiry. Staff are locked out too.
+ * grace                  : a paid period ended, before the blur day. Admin is locked out; staff carry on as normal.
+ * blurred                : from the blur day, staff can still punch, but their history is hidden.
+ * punch_closed           : from the punch-until day, staff can no longer punch and their history is hidden.
+ * cutoff                 : from the block day, nobody can use the app.
  */
-export type Phase = "trial" | "active" | "legacy" | "trial_expired" | "grace" | "blurred" | "cutoff";
+export type Phase = "trial" | "active" | "legacy" | "grace" | "blurred" | "punch_closed" | "cutoff";
 
 export interface AccessInfo {
   state: AccessState;
   phase: Phase;
   /** The company admin is locked out (any expiry). */
   locked: boolean;
-  /** Employees and managers are locked out (trial ended, or hard cutoff). */
+  /** Employees and managers are locked out (trial ended, or punching closed / hard cutoff). */
   staffLocked: boolean;
-  /** Employees' personal history is hidden (blurred phase). */
+  /** Employees' personal history is hidden (from the blur day). */
   restricted: boolean;
   daysLeft: number | null;
   daysSinceExpiry: number | null;
@@ -131,7 +179,8 @@ export interface AccessInfo {
 
 export function accessInfo(
   company: { accessUntil: Date | null; subscriptionStatus: string; employeeLimit: number | null },
-  now: Date
+  now: Date,
+  policy: GracePolicy = DEFAULT_GRACE_POLICY
 ): AccessInfo {
   const employeeLimit = company.employeeLimit;
   if (!company.accessUntil) {
@@ -154,20 +203,24 @@ export function accessInfo(
     };
   }
   const daysSinceExpiry = Math.floor((nowMs - untilMs) / DAY_MS);
-  if (trial) {
-    return { state: "expired", phase: "trial_expired", locked: true, staffLocked: true, restricted: false, daysLeft: 0, daysSinceExpiry, endedAs: "trial", employeeLimit };
-  }
+  const rules = trial ? TRIAL_GRACE_POLICY : policy;
   const phase: Phase =
-    daysSinceExpiry < GRACE_BLUR_AFTER_DAYS ? "grace" : daysSinceExpiry < HARD_CUTOFF_DAYS ? "blurred" : "cutoff";
+    daysSinceExpiry < rules.blurAfterDays
+      ? "grace"
+      : daysSinceExpiry < rules.punchUntilDays
+        ? "blurred"
+        : daysSinceExpiry < rules.blockAfterDays
+          ? "punch_closed"
+          : "cutoff";
   return {
     state: "expired",
     phase,
     locked: true,
-    staffLocked: phase === "cutoff",
-    restricted: phase === "blurred",
+    staffLocked: phase === "punch_closed" || phase === "cutoff",
+    restricted: phase === "blurred" || phase === "punch_closed" || phase === "cutoff",
     daysLeft: 0,
     daysSinceExpiry,
-    endedAs: "paid",
+    endedAs: trial ? "trial" : "paid",
     employeeLimit,
   };
 }

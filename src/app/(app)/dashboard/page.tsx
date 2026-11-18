@@ -6,6 +6,7 @@ import Link from "next/link";
 import { api, useMe } from "@/lib/client";
 import { Badge, Button, Card, EmptyState, ErrorBanner, Skeleton, Spinner } from "@/components/ui";
 import PunchCard from "@/components/PunchCard";
+import { HiddenDetails } from "@/components/HiddenDetails";
 import { formatDate, formatDayKey, formatNumber, formatTime, monthLabel, CURRENCY } from "@/lib/utils";
 import { EMPTY_CYCLE_COUNTS, calendarTone, statusLabel, statusTone, type CycleCounts } from "@/lib/attendance-stats";
 import { weekdayOf } from "@/lib/attendance-days";
@@ -329,6 +330,10 @@ function EmployeeDashboard() {
         </div>
       )}
 
+      {/* Punching stays available at full width. Everything below is this employee's own detail, hidden once access has ended. */}
+      <PunchCard onChanged={load} />
+
+      <HiddenDetails label="Your details">
       <div className="grid gap-5 lg:grid-cols-3">
         {/* ---- primary column: today and punching */}
         <div className="min-w-0 space-y-5 lg:col-span-2">
@@ -381,8 +386,6 @@ function EmployeeDashboard() {
               <p className="mt-0.5 text-xs text-slate-600">Last working day: {formatDayKey(notice.lastWorkingDay)}. Keep punching in and out as usual.</p>
             </Card>
           )}
-
-          <PunchCard onChanged={load} />
 
           {/* ---- this cycle */}
           <Card className="p-5 sm:p-6">
@@ -529,6 +532,7 @@ function EmployeeDashboard() {
           </Card>
         </div>
       </div>
+      </HiddenDetails>
       {loading && !records.length && <p className="mt-6 text-center text-xs text-slate-400">Loading your day…</p>}
     </div>
   );

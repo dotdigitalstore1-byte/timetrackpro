@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { api, clearMe } from "@/lib/client";
+import { api, ApiError, clearMe } from "@/lib/client";
 import { Button, Card, Input } from "@/components/ui";
 
 interface Details {
@@ -45,19 +45,22 @@ export default function RegisterPage() {
     setInfo("");
     setLoading(true);
     try {
-      const res = await api<StartResponse>("/api/auth/register", {
-        method: "POST",
-        body: JSON.stringify({ ...details, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
-      });
+      const payload = JSON.stringify({ ...details, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone });
+      const send = () => api<StartResponse>("/api/auth/register", { method: "POST", body: payload });
+      // A request that never reached the server (a dropped connection on the first click) is sent once more.
+      let res: StartResponse;
+      try {
+        res = await send();
+      } catch (err) {
+        if (!(err instanceof ApiError && err.status === 0)) throw err;
+        await new Promise((r) => setTimeout(r, 800));
+        res = await send();
+      }
       setSent(res);
       setStep("verify");
       setCode("");
       setCooldown(res.resendSeconds);
-      if (res.delivery === "console") {
-        setInfo("Development mode: the code was written to the server console (the terminal running `npm run dev`).");
-      } else {
-        setInfo(`We sent a 6-digit code to ${res.email}.`);
-      }
+      setInfo(`We sent a 6-digit code to ${res.email}. It is valid for ${res.expiresInMinutes} minutes.`);
     } catch (e) {
       const message = e instanceof Error ? e.message : "Could not send the code";
       setError(message);
@@ -96,7 +99,7 @@ export default function RegisterPage() {
             </svg>
           </div>
           <h1 className="text-2xl font-bold text-white">Start your workspace</h1>
-          <p className="text-sm text-indigo-200">20-day free trial · up to 4 employees · No credit card required</p>
+          <p className="text-sm text-indigo-200">20-day free trial · unlimited employees · No credit card required</p>
         </div>
 
         <Card className="p-6">

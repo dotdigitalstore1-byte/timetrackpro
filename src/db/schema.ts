@@ -38,6 +38,8 @@ export const companies = pgTable("companies", {
   employeeLimit: integer("employee_limit"),
   // trial | active | legacy. Drives the trial banner and the "trial ended" vs "subscription ended" wording.
   subscriptionStatus: varchar("subscription_status", { length: 20 }).notNull().default("legacy"),
+  // Unique company code (e.g. CO-7K3D-9PMQ), shown on the company profile and used by the platform admin to find a company.
+  code: varchar("code", { length: 20 }).unique(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -722,7 +724,7 @@ export const payments = pgTable(
     amount: numeric("amount", { precision: 12, scale: 2 }).notNull(), // rupees
     discountPercent: numeric("discount_percent", { precision: 5, scale: 2 }).notNull().default("0"),
     currency: varchar("currency", { length: 3 }).notNull().default("INR"),
-    status: varchar("status", { length: 20 }).notNull().default("created"), // created | processing | paid | failed
+    status: varchar("status", { length: 20 }).notNull().default("created"), // created | processing | paid | failed | refunded | partially_refunded
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     paidAt: timestamp("paid_at", { withTimezone: true }),
   },
@@ -770,3 +772,12 @@ export type AdminFeedbackResponse = typeof adminFeedbackResponses.$inferSelect;
 export type Plan = typeof plans.$inferSelect;
 export type BillingCycle = typeof billingCycles.$inferSelect;
 export type PendingRegistration = typeof pendingRegistrations.$inferSelect;
+// Platform-wide settings (a single row, id = 1). Edited by the platform admin.
+export const platformSettings = pgTable("platform_settings", {
+  id: integer("id").primaryKey().default(1),
+  graceBlurAfterDays: integer("grace_blur_after_days").notNull().default(5),
+  gracePunchUntilDays: integer("grace_punch_until_days").notNull().default(20),
+  graceBlockAfterDays: integer("grace_block_after_days").notNull().default(30),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
+});

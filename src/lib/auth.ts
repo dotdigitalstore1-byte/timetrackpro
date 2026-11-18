@@ -12,6 +12,7 @@ import {
 import type { Company, CompanySettings, Employee, User } from "@/db/schema";
 import { matchesSuperAdminCredentials, readSuperAdminEnv } from "@/lib/super-admin";
 import { accessInfo } from "@/lib/billing-core";
+import { loadGracePolicy } from "@/lib/grace-policy";
 
 const SESSION_COOKIE = "att_session";
 // Mobile users stay signed in. 400 days is the longest cookie lifetime browsers accept; sign-out and password
@@ -168,7 +169,7 @@ async function resolveAuth(): Promise<AuthContext | null> {
   if (company && company.status !== "active" && user.role !== "super_admin") {
     return null; // suspended / deactivated companies cannot log in
   }
-  const info = company ? accessInfo(company, new Date()) : null;
+  const info = company ? accessInfo(company, new Date(), await loadGracePolicy()) : null;
   return {
     user,
     company: company ?? null,

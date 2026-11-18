@@ -2,13 +2,15 @@
 
 import { useEffect, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { HiddenDetails, RestrictedProvider } from "@/components/HiddenDetails";
 
-const HISTORY_PAGES = ["/attendance", "/salary", "/leaves"];
+/** Personal pages that are blurred for an employee while their history is hidden. Profile stays open (contact details, password). */
+const HISTORY_PAGES = ["/attendance", "/salary", "/leaves", "/agreements", "/notice"];
 
 /**
  * Two things the app enforces for staff, without any message about the company's plan:
  *  - a forced password change: everything except the profile page is paused until the person sets their own password;
- *  - hidden history: the personal logs show a neutral placeholder. The server withholds the data anyway.
+ *  - hidden history: personal pages are blurred and explain who can restore access. The server withholds the data too.
  */
 export default function ClientGates({
   children,
@@ -29,21 +31,10 @@ export default function ClientGates({
 
   if (mustChange) return null;
 
-  const hidden = restricted && HISTORY_PAGES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
-  if (!hidden) return <>{children}</>;
-
+  const blurPage = restricted && HISTORY_PAGES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
   return (
-    <div className="relative" role="region" aria-label="Details hidden">
-      <div className="space-y-3 opacity-60" aria-hidden>
-        <div className="h-24 rounded-2xl bg-slate-200/70 blur-[3px]" />
-        <div className="h-40 rounded-2xl bg-slate-200/60 blur-[3px]" />
-        <div className="h-56 rounded-2xl bg-slate-200/50 blur-[3px]" />
-      </div>
-      <div className="absolute inset-0 flex items-center justify-center p-4">
-        <div className="w-full max-w-xs rounded-2xl bg-white/95 px-5 py-4 text-center shadow-lg ring-1 ring-slate-200">
-          <p className="text-sm font-semibold text-slate-800">Contact Admin to see these details.</p>
-        </div>
-      </div>
-    </div>
+    <RestrictedProvider restricted={restricted}>
+      {blurPage ? <HiddenDetails label="This page">{children}</HiddenDetails> : children}
+    </RestrictedProvider>
   );
 }
