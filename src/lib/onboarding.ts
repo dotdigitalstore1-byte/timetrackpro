@@ -127,7 +127,13 @@ export async function replaceTiers(input: unknown[]): Promise<TierDto[]> {
 
   await db.transaction(async (tx) => {
     await tx.delete(onboardingTiers);
-    await tx.insert(onboardingTiers).values(sorted.map((t, i) => ({ ...t, sortOrder: i + 1 })));
+    await tx.insert(onboardingTiers).values(
+      sorted.map((t, i) => ({
+        maxEmployees: t.maxEmployees,
+        pricePerEmployee: String(t.pricePerEmployee), // numeric column: Drizzle expects a string
+        sortOrder: i + 1,
+      }))
+    );
   });
   return loadTiers();
 }
