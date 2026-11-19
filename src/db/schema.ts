@@ -726,10 +726,17 @@ export const payments = pgTable(
     discountPercent: numeric("discount_percent", { precision: 5, scale: 2 }).notNull().default("0"),
     currency: varchar("currency", { length: 3 }).notNull().default("INR"),
     status: varchar("status", { length: 20 }).notNull().default("created"), // created | processing | paid | failed | refunded | partially_refunded
+    paymentMethod: varchar("payment_method", { length: 30 }), // upi | card | netbanking | wallet | emi | paylater (as the gateway names it)
+    refundedAmount: numeric("refunded_amount", { precision: 12, scale: 2 }).notNull().default("0"), // rupees returned so far
+    gatewayMeta: jsonb("gateway_meta").$type<Record<string, unknown>>().notNull().default({}), // whitelisted gateway details + event log
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     paidAt: timestamp("paid_at", { withTimezone: true }),
   },
-  (t) => [uniqueIndex("payments_provider_order_uq").on(t.provider, t.providerOrderId)]
+  (t) => [
+    uniqueIndex("payments_provider_order_uq").on(t.provider, t.providerOrderId),
+    index("payments_created_idx").on(t.createdAt),
+    index("payments_paid_idx").on(t.paidAt),
+  ]
 );
 
 // Forgot-password requests. The code is hashed; after it is verified, a short-lived reset token is kept (hashed).

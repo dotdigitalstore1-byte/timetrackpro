@@ -1,6 +1,6 @@
 // Payment gateway integration (Razorpay and Cashfree). The server decides the price, creates the order, confirms
 // payment with the gateway, and activates the plan exactly once, whether the browser or the webhook arrives first.
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { billingCycles, companies, payments, platformEvents, plans, subscriptions, users } from "@/db/schema";
 import type { Plan } from "@/db/schema";
@@ -13,6 +13,7 @@ import {
   razorpayWebhookSignatureValid,
   refundOutcome,
 } from "@/lib/payments-core";
+import { razorpayGatewayDetails, type GatewayDetails, type RazorpayPaymentEntity } from "@/lib/payments-report";
 
 export type Provider = "razorpay" | "cashfree";
 
@@ -176,24 +177,53 @@ export async function createCheckout(args: { companyId: string; userId: string; 
   };
 }
 
+/** What the gateway told us about one event: which event, where it came from, and the whitelisted details. */
+export interface GatewayNote {
+  event: string;
+  source: "checkout" | "webhook";
+  details?: GatewayDetails;
+}
+
+/**
+ * Appends an event to the payment's gateway log and merges its details in one atomic statement, so a webhook and a
+ * browser confirmation cannot overwrite each other's history.
+ */
+function mergeGatewayMeta(note: GatewayNote) {
+  const entry = JSON.stringify([{ event: note.event, source: note.source, at: new Date().toISOString() }]);
+  return sql`coalesce(${payments.gatewayMeta}, '{}'::jsonb) || ${JSON.stringify(note.details ?? {})}::jsonb || jsonb_build_object('events', coalesce(${payments.gatewayMeta} -> 'events', '[]'::jsonb) || ${entry}::jsonb)`;
+}
+
+async function attachGatewayNote(rowId: string, note: GatewayNote): Promise<void> {
+  await db.update(payments).set({ gatewayMeta: mergeGatewayMeta(note) }).where(eq(payments.id, rowId));
+}
+
+function methodOf(details: GatewayDetails | undefined): string | null {
+  return typeof details?.method === "string" ? details.method : null;
+}
+
 /**
  * Activates the plan for a payment that the gateway confirms as paid. Idempotent: a payment can only be fulfilled once,
- * so a browser confirmation and a webhook can arrive in either order.
+ * so a browser confirmation and a webhook can arrive in either order. A payment that failed once can still succeed on
+ * a retry of the same order, so a "failed" row is claimable too.
  */
-async function fulfill(paymentRowId: string, providerPaymentId: string | null, paidRupees: number): Promise<"paid" | "already_paid"> {
+async function fulfill(paymentRowId: string, providerPaymentId: string | null, paidRupees: number, note?: GatewayNote): Promise<"paid" | "already_paid"> {
   const [row] = await db.select().from(payments).where(eq(payments.id, paymentRowId)).limit(1);
   if (!row) throw new PaymentError("Payment not found.", 404);
-  if (row.status === "paid") return "already_paid";
+  if (row.status === "paid") {
+    if (note) await attachGatewayNote(row.id, note);
+    return "already_paid";
+  }
   if (Math.round(paidRupees * 100) !== Math.round(Number(row.amount) * 100)) {
     await db.update(payments).set({ status: "failed" }).where(eq(payments.id, row.id));
     throw new PaymentError("The amount paid does not match the plan price. The payment was not applied.", 400);
   }
 
   // Claim the payment so two deliveries cannot both activate it.
+  const previousStatus = row.status;
   const claimed = await db
     .update(payments)
     .set({ status: "processing" })
-    .where(and(eq(payments.id, row.id), eq(payments.status, "created")))
+    .where(and(eq(payments.id, row.id), inArray(payments.status, ["created", "failed"])))
     .returning();
   if (claimed.length === 0) return "already_paid";
 
@@ -210,11 +240,16 @@ async function fulfill(paymentRowId: string, providerPaymentId: string | null, p
     });
     await db
       .update(payments)
-      .set({ status: "paid", providerPaymentId, paidAt: new Date() })
+      .set({
+        status: "paid",
+        providerPaymentId,
+        paidAt: new Date(),
+        ...(note ? { paymentMethod: methodOf(note.details), gatewayMeta: mergeGatewayMeta(note) } : {}),
+      })
       .where(eq(payments.id, row.id));
     return "paid";
   } catch (e) {
-    await db.update(payments).set({ status: "created" }).where(eq(payments.id, row.id));
+    await db.update(payments).set({ status: previousStatus }).where(eq(payments.id, row.id));
     throw e;
   }
 }
@@ -246,7 +281,8 @@ export async function confirmCheckout(args: {
     });
     const payment = await gatewayJson(res, "fetch payment");
     if (payment.status !== "captured") return "pending";
-    return (await fulfill(row.id, args.paymentId, Number(payment.amount) / 100)) === "paid" ? "paid" : "already_paid";
+    const note: GatewayNote = { event: "payment.captured", source: "checkout", details: razorpayGatewayDetails(payment as unknown as RazorpayPaymentEntity) };
+    return (await fulfill(row.id, args.paymentId, Number(payment.amount) / 100, note)) === "paid" ? "paid" : "already_paid";
   }
 
   const res = await fetch(`${cashfreeBase()}/orders/${encodeURIComponent(args.orderId)}`, {
@@ -265,7 +301,7 @@ export async function confirmCheckout(args: {
 type RazorpayEvent = {
   event?: string;
   payload?: {
-    payment?: { entity?: { id: string; order_id: string; amount: number; status: string } };
+    payment?: { entity?: RazorpayPaymentEntity & { id: string; order_id: string; amount: number } };
     refund?: { entity?: { id: string; payment_id: string; amount: number } };
   };
 };
@@ -290,22 +326,34 @@ export async function handleRazorpayWebhook(rawBody: string, signature: string):
       .from(payments)
       .where(and(eq(payments.provider, "razorpay"), eq(payments.providerOrderId, entity.order_id)))
       .limit(1);
-    if (row) await fulfill(row.id, entity.id, entity.amount / 100);
+    if (row) {
+      await fulfill(row.id, entity.id, entity.amount / 100, {
+        event: "payment.captured",
+        source: "webhook",
+        details: razorpayGatewayDetails(entity),
+      });
+    }
     return true;
   }
 
   if (event.event === "payment.failed") {
     const entity = event.payload?.payment?.entity;
     if (!entity) return true;
-    // Only a payment that never succeeded can fail. A paid row is never downgraded to failed.
+    // A paid row is never downgraded. A failed order can still be paid on retry, so later failures are recorded too.
+    const details = razorpayGatewayDetails(entity);
     await db
       .update(payments)
-      .set({ status: "failed" })
+      .set({
+        status: "failed",
+        providerPaymentId: entity.id,
+        paymentMethod: methodOf(details),
+        gatewayMeta: mergeGatewayMeta({ event: "payment.failed", source: "webhook", details }),
+      })
       .where(
         and(
           eq(payments.provider, "razorpay"),
           eq(payments.providerOrderId, entity.order_id),
-          eq(payments.status, "created")
+          inArray(payments.status, ["created", "failed"])
         )
       );
     return true;
@@ -339,15 +387,24 @@ async function applyRazorpayRefund(providerPaymentId: string): Promise<void> {
   const outcome = refundOutcome(captured, refunded);
   if (outcome === "none") return;
 
+  const note: GatewayNote = { event: "refund.processed", source: "webhook", details: razorpayGatewayDetails(payment as unknown as RazorpayPaymentEntity) };
+  const refundedRupees = refunded / 100;
+
   if (outcome === "partial") {
-    await db.update(payments).set({ status: "partially_refunded" }).where(eq(payments.id, row.id));
+    await db
+      .update(payments)
+      .set({ status: "partially_refunded", refundedAmount: String(refundedRupees), gatewayMeta: mergeGatewayMeta(note) })
+      .where(eq(payments.id, row.id));
     await logPaymentEvent("payment.partially_refunded", row, { refundedRupees: refunded / 100 });
     return;
   }
 
   // Full refund: the company loses access now. Only the plan that was refunded is revoked: if the company has since
   // bought a newer plan that is still valid, refunding an older payment must not take that plan away.
-  await db.update(payments).set({ status: "refunded" }).where(eq(payments.id, row.id));
+  await db
+    .update(payments)
+    .set({ status: "refunded", refundedAmount: String(refundedRupees), gatewayMeta: mergeGatewayMeta(note) })
+    .where(eq(payments.id, row.id));
   const [latestActivated] = await db
     .select({ id: payments.id })
     .from(payments)
@@ -385,14 +442,24 @@ export async function handleCashfreeWebhook(rawBody: string, timestamp: string, 
   if (!secret || !cashfreeWebhookSignatureValid(rawBody, timestamp, signature, secret)) return false;
   const event = JSON.parse(rawBody) as {
     type?: string;
-    data?: { order?: { order_id: string; order_amount: number }; payment?: { cf_payment_id?: number | string } };
+    data?: {
+      order?: { order_id: string; order_amount: number };
+      payment?: { cf_payment_id?: number | string; payment_group?: string };
+    };
   };
   if (event.type !== "PAYMENT_SUCCESS_WEBHOOK" || !event.data?.order) return true;
+  const group = event.data.payment?.payment_group;
   const [row] = await db
     .select()
     .from(payments)
     .where(and(eq(payments.provider, "cashfree"), eq(payments.providerOrderId, event.data.order.order_id)))
     .limit(1);
-  if (row) await fulfill(row.id, String(event.data.payment?.cf_payment_id ?? ""), event.data.order.order_amount);
+  if (row) {
+    await fulfill(row.id, String(event.data.payment?.cf_payment_id ?? ""), event.data.order.order_amount, {
+      event: event.type,
+      source: "webhook",
+      details: group ? { method: group } : {},
+    });
+  }
   return true;
 }
