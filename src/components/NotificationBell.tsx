@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { api } from "@/lib/client";
 import { cn } from "@/lib/utils";
@@ -105,10 +106,16 @@ export default function NotificationBell() {
         )}
       </button>
 
-      {open && (
-        <div className="fixed inset-0 z-[45]">
+      {/*
+        Rendered through a portal on <body>. The mobile header is `sticky` with `backdrop-blur`, and backdrop-filter
+        makes that header the containing block for fixed-position children, so an overlay rendered inside it was
+        clipped to the header's height (only a snippet showed at the top). A portal escapes that stacking/containing
+        context so the sheet always covers the full viewport.
+      */}
+      {open && createPortal(
+        <div className="fixed inset-0 z-[60]" role="dialog" aria-modal="true" aria-label="Notifications">
           <div className="absolute inset-0 bg-slate-900/40" onClick={() => setOpen(false)} />
-          <aside className="absolute inset-x-0 bottom-0 flex max-h-[85dvh] flex-col rounded-t-2xl bg-white shadow-2xl sm:inset-y-0 sm:left-auto sm:right-0 sm:max-h-none sm:w-full sm:max-w-md sm:rounded-none">
+          <aside className="absolute inset-x-0 bottom-0 flex max-h-[85dvh] flex-col rounded-t-2xl bg-white pb-[env(safe-area-inset-bottom)] shadow-2xl sm:inset-y-0 sm:left-auto sm:right-0 sm:max-h-none sm:w-full sm:max-w-md sm:rounded-none sm:pb-0">
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
               <h2 className="text-lg font-bold text-slate-900">Notifications</h2>
               <button
@@ -177,8 +184,19 @@ export default function NotificationBell() {
                 </ul>
               )}
             </div>
+
+            <div className="border-t border-slate-200 p-3">
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="w-full rounded-xl bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-200 active:bg-slate-300"
+              >
+                Close
+              </button>
+            </div>
           </aside>
-        </div>
+        </div>,
+        document.body
       )}
 
       <Modal open={!!viewing} onClose={() => setViewing(null)} title="Company agreement">

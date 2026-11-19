@@ -2,7 +2,7 @@
 
 export interface NotificationItem {
   id: string;
-  kind: "agreement" | "notice" | "leave" | "slip" | "action";
+  kind: "agreement" | "notice" | "leave" | "slip" | "action" | "onboarding";
   title: string;
   body: string;
   at: string; // ISO time

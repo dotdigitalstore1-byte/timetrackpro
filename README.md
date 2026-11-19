@@ -502,6 +502,31 @@ Trial expiry locks everyone straight away, because the trial was never a paid co
 the server: the attendance history, leave and salary APIs return a restricted response, and punching and today's
 status keep working. Dashboard summary tiles and photo links are not yet hidden in this phase.
 
+## Expert Onboarding (paid setup service)
+
+Companies can buy hands-on setup from **Expert Onboarding** (company admin, **More → Expert Onboarding**). They choose
+**Onboarding only** (a base fee), **Employee addition** (a per-employee rate from the slab their headcount falls in), or
+both, then enter WhatsApp, email and a calling number (with a "same as WhatsApp" tick), and pay through Razorpay.
+
+* **Prices live in the database.** The platform owner sets the base fee, the default specialist commission and the
+  employee slabs under **Superadmin → Onboarding**. The browser never supplies a price. A base fee of 0 keeps checkout
+  closed until it is set.
+* **Slabs are all-units:** the slab a headcount falls into sets the rate for every employee in that order (up to 10 at
+  ₹60, 11–25 at ₹50, above 25 at ₹40 by default).
+* **Shared queue.** A paid request reaches the queue only once Razorpay confirms the payment (browser confirmation or
+  the existing Razorpay webhook, whichever arrives first). A specialist accepts it with an atomic claim, so only one
+  specialist can hold it. The client's contact details appear only to the holder.
+* **Specialists** (role `onboarding_specialist`, created by the platform owner with email, password, phone and an optional
+  photo) sign in and land on **Queue**. They can accept, **release** (back to the queue at once), **flag** an issue, and
+  **mark complete**. Their commission is fixed at completion and shown per month.
+* **Ratings:** after completion the client rates satisfaction from 0 to 100%. A reminder appears after 24 hours. After
+  48 hours without a rating the request completes automatically with a 60% rating, recorded with source `auto`.
+  Averages below 60% are flagged on the monthly split. They are not blocked, so the platform owner decides on payouts.
+* **Scheduling:** timers are checked whenever the affected lists load, so no cron job is required.
+
+Apply `migrations/2026-12-expert-onboarding.sql` once (idempotent). No new webhook URL is needed: the existing Razorpay
+webhook also handles `payment.captured` for onboarding orders.
+
 ## Mobile layout
 
 The public page uses two-column cards on phones, and the pricing slider updates the price as it moves. The billing
@@ -531,3 +556,6 @@ Today's lines carry a "Today · live" tag, and the Deductions heading shows what
 **Full days present (incl. late)** counts late arrivals as full days, so a late day is never lost from that counter.
 
 Excuses are limited to admins in the interface. Managers with the "manage attendance" power can also use the endpoint.
+
+### Fix: specialist creation failing (role too long)
+Run `migrations/2026-12-users-role-length.sql` once (idempotent). It widens `users.role` from `varchar(20)` to `varchar(50)`, because the `onboarding_specialist` role is 21 characters.

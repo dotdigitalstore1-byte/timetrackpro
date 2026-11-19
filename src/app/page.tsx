@@ -85,7 +85,7 @@ function Logo() {
 
 export default async function LandingPage() {
   const [ctx, pricing] = await Promise.all([getAuthAllowLocked(), loadPricing()]);
-  const dashboardHref = ctx?.locked ? "/billing" : "/dashboard";
+  const dashboardHref = ctx?.locked ? "/billing" : ctx?.user.role === "onboarding_specialist" ? "/specialist" : "/dashboard";
 
   return (
     <div className="min-h-dvh bg-white text-slate-900">

@@ -119,7 +119,7 @@ export const users = pgTable("users", {
   email: varchar("email", { length: 200 }).notNull().unique(),
   passwordHash: text("password_hash").notNull(),
   fullName: varchar("full_name", { length: 200 }).notNull(),
-  role: varchar("role", { length: 20 }).notNull().default("employee"), // super_admin | company_admin | manager | employee
+  role: varchar("role", { length: 50 }).notNull().default("employee"), // super_admin | company_admin | manager | employee
   // Manager powers granted by the company admin (see src/lib/access.ts). Empty for every other role.
   managerPermissions: jsonb("manager_permissions").$type<string[]>().notNull().default([]),
   phone: varchar("phone", { length: 50 }),
@@ -789,3 +789,102 @@ export const platformSettings = pgTable("platform_settings", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
 });
+
+// ---------------------------------------------------------------------------
+// Expert Onboarding (paid setup service). Requests are paid through the gateway, then queued for the
+// Onboarding Specialists. Specialists are ordinary `users` rows with role `onboarding_specialist` and no company.
+// ---------------------------------------------------------------------------
+
+// Single row (id = 1): base fee and the default specialist commission. Edited by the platform owner.
+export const onboardingSettings = pgTable("onboarding_settings", {
+  id: integer("id").primaryKey().default(1),
+  baseFee: numeric("base_fee", { precision: 12, scale: 2 }).notNull().default("0"), // rupees, Onboarding Only
+  defaultCommissionPercent: numeric("default_commission_percent", { precision: 5, scale: 2 }).notNull().default("10"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
+});
+
+// Per-employee slabs. A tier applies while the employee count is <= maxEmployees. maxEmployees NULL = no upper bound
+// (the catch-all tier, e.g. "above 25").
+export const onboardingTiers = pgTable(
+  "onboarding_tiers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    maxEmployees: integer("max_employees"),
+    pricePerEmployee: numeric("price_per_employee", { precision: 12, scale: 2 }).notNull(),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("onboarding_tiers_max_uq").on(t.maxEmployees)]
+);
+
+// Profile of a specialist. commissionPercent NULL = use the global default from onboardingSettings.
+export const onboardingSpecialists = pgTable("onboarding_specialists", {
+  userId: uuid("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  phone: varchar("phone", { length: 50 }).notNull(),
+  photoDataUrl: text("photo_data_url"), // small, resized image as a data URL
+  commissionPercent: numeric("commission_percent", { precision: 5, scale: 2 }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const onboardingRequests = pgTable(
+  "onboarding_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    requestedBy: uuid("requested_by").references(() => users.id, { onDelete: "set null" }),
+    includeOnboarding: boolean("include_onboarding").notNull().default(true),
+    includeEmployees: boolean("include_employees").notNull().default(false),
+    employeeCount: integer("employee_count").notNull().default(0), // headcount when the order was placed
+    baseFee: numeric("base_fee", { precision: 12, scale: 2 }).notNull().default("0"),
+    employeeFee: numeric("employee_fee", { precision: 12, scale: 2 }).notNull().default("0"), // total for employees
+    totalAmount: numeric("total_amount", { precision: 12, scale: 2 }).notNull().default("0"), // what was charged
+    contactWhatsapp: varchar("contact_whatsapp", { length: 20 }).notNull(),
+    contactEmail: varchar("contact_email", { length: 200 }).notNull(),
+    contactCall: varchar("contact_call", { length: 20 }).notNull(),
+    // pending_payment | open | claimed | awaiting_rating | completed
+    status: varchar("status", { length: 20 }).notNull().default("pending_payment"),
+    providerOrderId: varchar("provider_order_id", { length: 120 }),
+    providerPaymentId: varchar("provider_payment_id", { length: 120 }),
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+    specialistId: uuid("specialist_id").references(() => users.id, { onDelete: "set null" }),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    // Snapshotted when the request is claimed / completed so later commission changes do not rewrite history.
+    commissionPercent: numeric("commission_percent", { precision: 5, scale: 2 }),
+    commissionAmount: numeric("commission_amount", { precision: 12, scale: 2 }),
+    releaseCount: integer("release_count").notNull().default(0),
+    flagReason: text("flag_reason"), // specialist-raised issue, e.g. "client not responding"
+    flaggedAt: timestamp("flagged_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }), // specialist marked the onboarding complete
+    satisfaction: integer("satisfaction"), // 0-100
+    ratedAt: timestamp("rated_at", { withTimezone: true }),
+    ratingSource: varchar("rating_source", { length: 10 }), // user | auto
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("onboarding_requests_order_uq").on(t.providerOrderId),
+    index("onboarding_requests_status_idx").on(t.status),
+    index("onboarding_requests_specialist_idx").on(t.specialistId),
+    index("onboarding_requests_company_idx").on(t.companyId),
+  ]
+);
+
+// Audit trail of a request: placed, paid, claimed, released, flagged, completed, rated, auto-completed.
+export const onboardingEvents = pgTable(
+  "onboarding_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    requestId: uuid("request_id")
+      .notNull()
+      .references(() => onboardingRequests.id, { onDelete: "cascade" }),
+    actorId: uuid("actor_id").references(() => users.id, { onDelete: "set null" }),
+    event: varchar("event", { length: 30 }).notNull(),
+    note: text("note"),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("onboarding_events_request_idx").on(t.requestId)]
+);

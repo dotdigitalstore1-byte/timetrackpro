@@ -43,6 +43,7 @@ const icons = {
   payments: <Icon path="M3 10h18M7 15h2m4 0h4M5 5h14a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2z" />,
   notice: <Icon path="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />,
   agreements: <Icon path="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />,
+  onboarding: <Icon path="M13 10V3L4 14h7v7l9-11h-7z" />,
   logout: <Icon path="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />,
 };
 
@@ -72,6 +73,7 @@ export default function AppShell({
   const [loggingOut, setLoggingOut] = useState(false);
 
   const isSuperAdmin = role === "super_admin";
+  const isSpecialist = role === "onboarding_specialist";
 
   const isAdmin = role === "company_admin";
   const isManager = role === "manager";
@@ -84,7 +86,10 @@ export default function AppShell({
         { href: "/superadmin/plans", label: "Plans", icon: icons.rules },
         { href: "/superadmin/analytics", label: "Analytics", icon: icons.analytics },
         { href: "/superadmin/payments", label: "Payments", icon: icons.payments },
+        { href: "/superadmin/onboarding", label: "Onboarding", icon: icons.onboarding },
       ]
+    : isSpecialist
+      ? [{ href: "/specialist", label: "Queue", icon: icons.onboarding }]
     : [
         { href: "/dashboard", label: "Home", icon: icons.home },
         { href: "/attendance", label: "Attendance", icon: icons.attendance },
@@ -94,6 +99,8 @@ export default function AppShell({
 
   const moreNav: NavItem[] = isSuperAdmin
     ? []
+    : isSpecialist
+      ? [{ href: "/profile", label: "Profile", icon: icons.user }]
     : [
         ...(isAdmin || isManager ? [{ href: "/employees", label: "Employees", icon: icons.employees }] : []),
         ...(role === "employee" ? [{ href: "/notice", label: "Notice period", icon: icons.notice }] : []),
@@ -109,6 +116,7 @@ export default function AppShell({
               { href: "/notice", label: "Notice period", icon: icons.notice },
               { href: "/settings", label: "Settings", icon: icons.settings },
               { href: "/billing", label: "Billing", icon: icons.salary },
+              { href: "/onboarding", label: "Expert Onboarding", icon: icons.onboarding },
             ]
           : []),
         { href: "/profile", label: "Profile", icon: icons.user },
@@ -124,7 +132,8 @@ export default function AppShell({
     .map((s) => s[0]?.toUpperCase())
     .join("");
 
-  const showBell = !isSuperAdmin;
+  // The bell reads company notifications, so platform owners and specialists (no company) do not get one.
+  const showBell = !isSuperAdmin && !isSpecialist;
   const defaultMarkDesktop = (
     <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-white">
       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

@@ -25,6 +25,8 @@ export default function LoginPage() {
       clearMe();
       if (res.role === "super_admin") {
         router.replace("/superadmin");
+      } else if (res.role === "onboarding_specialist") {
+        router.replace("/specialist");
       } else {
         router.replace("/dashboard");
       }

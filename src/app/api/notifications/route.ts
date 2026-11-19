@@ -8,6 +8,7 @@ import { showsPopup } from "@/lib/agreements";
 import { currentFeedbackSlot } from "@/lib/feedback-server";
 import { adminFeedbackResponses } from "@/db/schema";
 import type { NotificationItem } from "@/lib/notifications";
+import { companyNotifications } from "@/lib/onboarding";
 
 const LIST_LIMIT = 40;
 const LOOKBACK_DAYS = 90;
@@ -214,6 +215,10 @@ export async function GET() {
     }
   }
 
+  // Expert Onboarding: the company admin hears when a specialist accepts and when a rating is due.
+  if (ctx.user.role === "company_admin") {
+    items.push(...(await companyNotifications(companyId, seenAt)));
+  }
   items.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
   const list = items.slice(0, LIST_LIMIT);
   return NextResponse.json({

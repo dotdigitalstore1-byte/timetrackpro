@@ -5,6 +5,7 @@ import { db } from "@/db";
 import { billingCycles, companies, payments, platformEvents, plans, subscriptions, users } from "@/db/schema";
 import type { Plan } from "@/db/schema";
 import { activatePlan, seatsUsed } from "@/lib/billing";
+import { onboardingWebhookCaptured } from "@/lib/onboarding";
 import { quoteCycle, toMinorUnits } from "@/lib/billing-core";
 import {
   cashfreeWebhookSignatureValid,
@@ -332,7 +333,10 @@ export async function handleRazorpayWebhook(rawBody: string, signature: string):
         source: "webhook",
         details: razorpayGatewayDetails(entity),
       });
+      return true;
     }
+    // Not a subscription payment: it may be an Expert Onboarding order (same webhook, no second URL to register).
+    await onboardingWebhookCaptured(entity.order_id, entity.id, entity.amount / 100);
     return true;
   }
 
