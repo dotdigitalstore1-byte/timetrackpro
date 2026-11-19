@@ -187,7 +187,7 @@ export const companySettings = pgTable("company_settings", {
   salaryDisbursementDay: integer("salary_disbursement_day").notNull().default(5),
   // Salary hold: each unapproved day delays the disbursement date by unapprovedHoldDays (ON by default).
   salaryHoldEnabled: boolean("salary_hold_enabled").notNull().default(true),
-  dailyRateBasis: varchar("daily_rate_basis", { length: 10 }).notNull().default("fixed"), // legacy: salaries now always use a 30-day month
+  dailyRateBasis: varchar("daily_rate_basis", { length: 10 }).notNull().default("fixed"), // daily rate divisor: "fixed" (÷30), "working" (working days), "calendar" (days in cycle)
 
   // ---- Weekly-off work & comp-off (Extra pay is OFF by default)
   extraPayEnabled: boolean("extra_pay_enabled").notNull().default(false), // pay unused comp-off at cycle end
@@ -465,6 +465,7 @@ export const salaryRecords = pgTable(
   year: integer("year").notNull(),
   basicSalary: numeric("basic_salary", { precision: 12, scale: 2 }).notNull().default("0"),
   dailyRate: numeric("daily_rate", { precision: 12, scale: 2 }).notNull().default("0"),
+  dailyRateDivisor: numeric("daily_rate_divisor", { precision: 6, scale: 2 }).notNull().default("30"), // the divisor used for this cycle (frozen at finalization)
   presentDays: numeric("present_days", { precision: 6, scale: 1 }).notNull().default("0"),
   absentDays: numeric("absent_days", { precision: 6, scale: 1 }).notNull().default("0"),
   lateDays: integer("late_days").notNull().default(0),

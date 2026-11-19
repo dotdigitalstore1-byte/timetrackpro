@@ -20,6 +20,7 @@ interface SalaryData {
   breakdown: {
     basicSalary: number;
     dailyRate: number;
+    dailyRateDivisor: number;
     presentDays: number;
     absentDays: number;
     lateDays: number;
@@ -281,12 +282,12 @@ export default function SalaryPage() {
             <Card>
               <h3 className="mb-1 font-bold text-slate-900">Earnings</h3>
               <p className="mb-3 text-xs leading-relaxed text-slate-500">
-                Every salary is worked out on a fixed 30-day month, so the daily rate is basic salary ÷ 30 in every month.
+                The daily rate is basic salary ÷ {b.dailyRateDivisor} for this cycle{b.dailyRateDivisor === 30 ? " (the standard 30-day month)" : b.dailyRateDivisor ? " (set by the company's salary basis on the Rules page)" : ""}.
                 Sundays and holidays are paid days unless the Sunday/holiday rule cuts them (see Deductions). Each unpaid day (an unapproved absence, or leave not covered by comp-off) costs one daily rate.
               </p>
               <div className="space-y-2 text-sm">
                 <Row label="Monthly basic salary" value={`${currency}${formatNumber(b.basicSalary)}`} />
-                <Row label="Daily rate (basic ÷ 30)" value={`${currency}${formatNumber(b.dailyRate)}`} />
+                <Row label={`Daily rate (basic ÷ ${b.dailyRateDivisor})`} value={`${currency}${formatNumber(b.dailyRate)}`} />
                 <Row label="Full days present (incl. late)" value={`${formatNumber(b.presentDays, 0)}`} />
                 {b.weekOffWorkedDays > 0 && (
                   <Row label="Weekly-off days worked (each earns 1 comp-off)" value={`${b.weekOffWorkedDays} day(s)`} />

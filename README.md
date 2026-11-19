@@ -97,11 +97,15 @@ Deploy to Vercel: add `DATABASE_URL`, `SUPER_ADMIN_*` as environment variables. 
 ## Payroll rules (as implemented)
 
 * Daily rate = basic ÷ `work days per month` (company setting).
+* **Daily rate** = basic ÷ divisor, where the divisor is set per company in **Rules → Daily pay & deductions → Daily rate**:
+  30 (fixed 30-day month, the default), the **working days** in the cycle (weekly offs left out), or the **calendar days**
+  in the cycle (28, 30 or 31). The divisor is calculated for each salary cycle and is stored on the salary record when the
+  cycle is finalized, so a finalized month never changes if the setting is changed later. Paid holidays count as working days.
 * **Attendance salary** = basic − (unapproved absent days × daily rate).
 * **Late / half-day / approved-leave deductions** = per-day amount (fixed or % of daily rate). Approved leave at
   0 % is paid leave; at 100 % it is unpaid. Nothing is deducted twice.
 * **Unapproved leave** = a working day with no punch-in and no approved leave. It is unpaid (one daily rate).
-* **Salary hold** (Rules → Salary hold, ON by default). Every unapproved day delays the **disbursement date** by
+* **Salary hold** (Rules → Deductions & absence → Salary hold for unapproved absence, ON by default). Every unapproved day delays the **disbursement date** by
   `delay per unapproved day` (default 2) days, counted from the salary date. 1 day → 2 days, 2 days → 4 days,
   3 days → 6 days. The salary is **not** reduced; it is paid in full on the later date. Each run of unapproved days is
   a hold row, and an admin can release it, which cancels that run's delay. Switching the rule OFF removes all delays.
@@ -345,8 +349,22 @@ photos to object storage if it keeps growing.
 
 ### Rules page
 Rules are grouped into categories (attendance timing, overtime and weekly-off work, deductions and absence, leave and salary
-cycle, records and privacy). Each rule opens from a full-width tap target with **View more**. Phones get a scrollable category
-row; desktops get a side index. **Expand all** and **Collapse all** are available on both.
+cycle, weekly offs and holidays, records and privacy). Tap a rule's title to open it, and use the blue **i** button for its
+explanation with an example. The page also has:
+* **Search** (top of the page) that filters rules by name, wording or keyword, such as *late*, *sunday* or *salary date*.
+  Matching rules open automatically. Press Esc to clear the search.
+* **Test a day**: type one day's punch-in and punch-out to see how the rules on the page would count it (on time, late,
+  half day, absent, early leave, overtime). It uses the rules as they are on screen, including unsaved changes, and
+  follows the same order as payroll. The shift itself is set on the Settings page.
+* **Review changes** before saving: every change is listed in plain words (for example *Late cool-off: 5 min → 10 min*).
+  Switched-off rules do not appear as changes, because their values do not affect pay.
+* **Validation**: a value the server would reject or silently round (for example a cool-off over 120 minutes, or a
+  percentage over 100) is marked in red with the reason, and **Save rules** stays disabled until it is fixed.
+* **Ctrl+S** (⌘S on a Mac) saves. Closing or reloading the tab with unsaved changes shows a browser warning.
+* **Words used on this page**: a glossary at the bottom explaining terms such as cool-off, comp-off, salary cycle and finalized.
+
+Phones get a scrollable category row; desktops get the same row above the rules. **Expand all** and **Collapse all** are
+available on both.
 
 ## Release: live dashboard, late-percentage absence, slip branding, mid-cycle slips
 
@@ -364,6 +382,13 @@ Run `migrations/2026-11-live-dashboard-slips-branding.sql` once (idempotent). Th
 Off by default. When on, a punch-in after the set share of the shift (10–100 %, default 50 %) is recorded as **absent**
 instead of late or half day. The employee can still punch in and out. Payroll treats such a day as an absence, the same as
 a day with no punch. The cut-off time is shown on the Rules page.
+
+### Salary basis (daily rate)
+Companies choose how the daily rate is worked out (Rules → Daily pay & deductions). The choice drives every per-day amount:
+absent days, half days, late and early-leave deductions, approved-leave deductions, the Sunday/holiday cut, extra pay for
+unused comp-off, and the overtime hourly rate. The Rules page shows the divisor for the current cycle and a comparison of
+the three options for a sample salary. Weekly-off extra pay and comp-off controls are unchanged.
+Migration: run `migrations/2026-12-salary-basis.sql` once (idempotent) before deploying.
 
 ### Rules explanations
 Every rule and toggle has an **i** button. It explains what the rule does and gives a worked example.

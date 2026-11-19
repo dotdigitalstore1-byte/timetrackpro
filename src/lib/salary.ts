@@ -19,12 +19,14 @@ import {
   computeSalary,
   cyclePeriod,
   DEFAULT_SALARY_DISBURSEMENT_DAY,
+  dailyRateDivisor,
   dateKey,
   holdDelayDaysOf,
   holidayDeductionBlocks,
   localParts,
   localWorkDate,
   parseHHMM,
+  salaryBasisOf,
   salaryDateOf,
   SALARY_BASE_DAYS,
   shiftHours,
@@ -243,7 +245,8 @@ export function computeFromData(
       ? holidayDeductionBlocks(period, absence, settings.holidayDeductionTriggerCount ?? 2)
       : [];
 
-  // Standard month: the daily rate is always basic / 30, whatever the calendar length of the cycle.
+  // Daily rate: basic ÷ the company's chosen divisor for this cycle (30, working days, or calendar days).
+  const divisor = dailyRateDivisor(salaryBasisOf(settings.dailyRateBasis), period, weeklyOff);
   const shift = shiftOf(settings, emp);
   const lateRule = rule(settings.lateDeductionType, settings.lateDeductionValue);
   const halfDayRule = rule(settings.halfDayDeductionType, settings.halfDayDeductionValue);
@@ -253,7 +256,7 @@ export function computeFromData(
 
   const result = computeSalary({
     basicSalary,
-    workDaysPerMonth: SALARY_BASE_DAYS,
+    workDaysPerMonth: divisor,
     summary,
     earlyLeaveRule,
     lateMarks,
@@ -274,7 +277,7 @@ export function computeFromData(
     ? record?.deductionLedger ?? null
     : buildDeductionLedger({
         summary,
-        dailyRate: basicSalary / SALARY_BASE_DAYS,
+        dailyRate: basicSalary / divisor,
         lateRule,
         halfDayRule,
         leaveRule,
@@ -292,6 +295,7 @@ export function computeFromData(
     const n = (v: string | number) => Number(v);
     finalResult = {
       dailyRate: n(record.dailyRate),
+      dailyRateDivisor: record.dailyRateDivisor ? n(record.dailyRateDivisor) : SALARY_BASE_DAYS,
       attendanceSalary: n(record.attendanceSalary),
       lateDeduction: n(record.lateDeduction), // stored value already includes the late-marks penalty
       lateMarksDeduction: 0,
@@ -534,6 +538,7 @@ export async function saveDraft(companyId: string, employeeId: string, year: num
   const values = {
     basicSalary: c.basicSalary.toFixed(2),
     dailyRate: result.dailyRate.toFixed(2),
+    dailyRateDivisor: result.dailyRateDivisor.toFixed(2),
     presentDays: summary.presentDays.toFixed(1),
     absentDays: summary.absentDays.toFixed(1),
     lateDays: summary.lateDays,

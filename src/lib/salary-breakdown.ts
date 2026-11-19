@@ -11,6 +11,7 @@ export function breakdownOf(c: SalaryComputation) {
   return {
     basicSalary: c.basicSalary,
     dailyRate: r.dailyRate,
+    dailyRateDivisor: r.dailyRateDivisor,
     presentDays: s.presentDays,
     absentDays: s.absentDays,
     lateDays: s.lateDays,

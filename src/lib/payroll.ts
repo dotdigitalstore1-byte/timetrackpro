@@ -147,6 +147,7 @@ export function computeStatus(punchIn: Date, p: PolicyInput): PunchStatus {
 export function parseWeeklyOff(value: string | null | undefined): Set<number> {
   const set = new Set<number>();
   for (const part of String(value ?? "0,6").split(",")) {
+    if (part.trim() === "") continue; // an empty list means no weekly off (Number("") would read as Sunday)
     const n = Number(part.trim());
     if (Number.isInteger(n) && n >= 0 && n <= 6) set.add(n);
   }
@@ -511,6 +512,37 @@ export interface DeductionRule {
 /** Every month is treated as this many days, so the daily rate never depends on the calendar. */
 export const SALARY_BASE_DAYS = 30;
 
+/**
+ * How the daily rate is worked out (company setting, stored in daily_rate_basis):
+ *  - "fixed":    basic ÷ 30 in every cycle (the default; weekly offs count as paid days)
+ *  - "working":  basic ÷ the working days in the cycle (weekly offs are left out)
+ *  - "calendar": basic ÷ the calendar days in the cycle (28, 30 or 31)
+ */
+export type SalaryBasis = "fixed" | "working" | "calendar";
+export const SALARY_BASES: SalaryBasis[] = ["fixed", "working", "calendar"];
+
+/** Any stored or submitted value that is not a known basis reads as the standard 30-day month. */
+export function salaryBasisOf(v: unknown): SalaryBasis {
+  return v === "working" || v === "calendar" ? v : "fixed";
+}
+
+/**
+ * The number the daily rate is divided by for one salary cycle. `period` is the cycle (UTC midnights of
+ * company-local dates) and `weeklyOff` holds JS weekday numbers (0 = Sunday). Holidays are not removed.
+ */
+export function dailyRateDivisor(basis: SalaryBasis, period: Period, weeklyOff: Set<number>): number {
+  if (basis === "fixed") return SALARY_BASE_DAYS;
+  let days = 0;
+  let working = 0;
+  for (let t = period.start.getTime(); t <= period.end.getTime(); t += 86400000) {
+    days++;
+    if (!weeklyOff.has(new Date(t).getUTCDay())) working++;
+  }
+  const divisor = basis === "calendar" ? days : working;
+  // A cycle that somehow has no working day falls back to the standard month rather than dividing by zero.
+  return divisor > 0 ? divisor : SALARY_BASE_DAYS;
+}
+
 /** The salary date when the company has not chosen one: the 5th of the month after the cycle ends. */
 export const DEFAULT_SALARY_DISBURSEMENT_DAY = 5;
 
@@ -535,6 +567,7 @@ export interface SalaryInput {
 
 export interface SalaryResult {
   dailyRate: number;
+  dailyRateDivisor: number; // the number the daily rate was divided by (30, working days or calendar days)
   attendanceSalary: number; // basic minus unpaid (unapproved absent) days
   lateDeduction: number;
   lateMarksDeduction: number; // extra penalty from the "every N late marks" rule
@@ -606,6 +639,7 @@ export function computeSalary(i: SalaryInput): SalaryResult {
 
   return {
     dailyRate: r2(dailyRate),
+    dailyRateDivisor: divisor,
     attendanceSalary: r2(attendanceSalary),
     lateDeduction: r2(lateDeduction),
     lateMarksDeduction: r2(lateMarksDeduction),

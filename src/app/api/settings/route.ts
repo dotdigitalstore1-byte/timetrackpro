@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { and, asc, eq, gte, inArray, isNotNull, lte } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLogs, companies, companyBranding, companyHolidays, companySettings, salaryRecords } from "@/db/schema";
-import { dateKey, isValidTimezone } from "@/lib/payroll";
+import { dateKey, isValidTimezone, salaryBasisOf } from "@/lib/payroll";
 import { loadCompanyProfile } from "@/lib/company-profile";
 import { getAuth } from "@/lib/auth";
 
@@ -90,6 +90,8 @@ export async function POST(req: Request) {
     if (typeof s.shiftStart === "string" && /^\d{2}:\d{2}$/.test(s.shiftStart)) update.shiftStart = s.shiftStart;
     if (typeof s.shiftEnd === "string" && /^\d{2}:\d{2}$/.test(s.shiftEnd)) update.shiftEnd = s.shiftEnd;
     if (s.graceMinutes !== undefined) update.graceMinutes = clampInt(s.graceMinutes, 0, 120, 5);
+    // Daily rate divisor: 30 (fixed), working days in the cycle, or calendar days in the cycle.
+    if (s.dailyRateBasis !== undefined) update.dailyRateBasis = salaryBasisOf(s.dailyRateBasis);
     if (s.lateThresholdMinutes !== undefined) update.lateThresholdMinutes = clampInt(s.lateThresholdMinutes, 0, 720, 30);
     if (s.halfDayThresholdMinutes !== undefined) update.halfDayThresholdMinutes = numField(s.halfDayThresholdMinutes, 120);
     if (s.lateDeductionType !== undefined) update.lateDeductionType = s.lateDeductionType === "fixed" ? "fixed" : "percentage";
@@ -109,7 +111,7 @@ export async function POST(req: Request) {
       update.timezone = tz;
     }
     if (s.weeklyOff !== undefined) {
-      const days = [...new Set(String(s.weeklyOff).split(",").map((x) => Number(x.trim())).filter((n) => Number.isInteger(n) && n >= 0 && n <= 6))];
+      const days = [...new Set(String(s.weeklyOff).split(",").filter((x) => x.trim() !== "").map((x) => Number(x.trim())).filter((n) => Number.isInteger(n) && n >= 0 && n <= 6))];
       if (days.length >= 7) return NextResponse.json({ error: "At least one day of the week must be a working day." }, { status: 400 });
       update.weeklyOff = days.sort().join(",");
     }
