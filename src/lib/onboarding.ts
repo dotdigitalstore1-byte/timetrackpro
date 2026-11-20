@@ -238,6 +238,8 @@ export async function createOnboardingOrder(input: OrderInput) {
       contactWhatsapp: contact.whatsapp,
       contactEmail: contact.email,
       contactCall: contact.call,
+      contactName: contact.contactName,
+      setupRequirements: contact.setupRequirements,
       status: "pending_payment",
     })
     .returning();
@@ -558,10 +560,15 @@ export async function specialistQueue(specialistId: string) {
         satisfaction: r.satisfaction,
         flagReason: r.flagReason,
         delayed: active && r.claimedAt ? isDelayed(r.claimedAt, now) : false,
-        // Contact details only while the specialist holds the request.
-        client: active
-          ? { companyName, whatsapp: r.contactWhatsapp, email: r.contactEmail, call: r.contactCall }
-          : null,
+        // Full client details stay visible to the specialist who handled the request, including after it is completed.
+        client: {
+          companyName,
+          contactName: r.contactName,
+          whatsapp: r.contactWhatsapp,
+          email: r.contactEmail,
+          call: r.contactCall,
+          setupRequirements: r.setupRequirements,
+        },
       };
     }),
   };
@@ -635,7 +642,7 @@ export async function completeRequest(specialistId: string, requestId: string): 
     .from(onboardingRequests)
     .where(and(eq(onboardingRequests.id, requestId), eq(onboardingRequests.specialistId, specialistId)))
     .limit(1);
-  if (!row || row.status !== "claimed") throw new OnboardingError("Only a request you have claimed and not yet completed can be marked complete.", 409);
+  if (!row || row.status !== "claimed") throw new OnboardingError("Only a request in your My Work can be marked as work done.", 409);
   const percent = row.commissionPercent !== null ? Number(row.commissionPercent) : (await specialistRate(specialistId)).percent;
   const amount = commissionAmountFor(Number(row.totalAmount), percent);
   const now = new Date();
@@ -645,7 +652,7 @@ export async function completeRequest(specialistId: string, requestId: string): 
     .where(and(eq(onboardingRequests.id, requestId), eq(onboardingRequests.status, "claimed")))
     .returning({ id: onboardingRequests.id });
   if (done.length === 0) throw new OnboardingError("This request changed while you were working on it. Refresh and try again.", 409);
-  await logEvent(requestId, "completed", specialistId, "Marked complete. Waiting for the client's rating.");
+  await logEvent(requestId, "completed", specialistId, "Work done. Sent for the client's review and rating.");
 }
 
 // ---------------------------------------------------------------------------

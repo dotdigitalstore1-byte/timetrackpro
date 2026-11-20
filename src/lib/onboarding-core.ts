@@ -140,21 +140,39 @@ export function normalizeEmail(raw: string): string | null {
 }
 
 export interface ContactInput {
+  /** Person the specialist should talk to at the client company. */
+  contactName: string;
   whatsapp: string;
   email: string;
   call: string;
   /** Checked box: "Same as WhatsApp number". */
   callSameAsWhatsapp: boolean;
+  /** What needs to be set up (departments, shifts, leave rules, employees to add, and so on). */
+  setupRequirements: string;
 }
 
-export function normalizeContact(input: ContactInput): { whatsapp: string; email: string; call: string } {
+export function normalizeContact(input: ContactInput): {
+  contactName: string;
+  whatsapp: string;
+  email: string;
+  call: string;
+  setupRequirements: string;
+} {
+  const contactName = String(input.contactName ?? "").trim().replace(/\s+/g, " ");
+  if (contactName.length < 2 || contactName.length > 120) {
+    throw new OnboardingValidationError("Enter the name of the person the specialist should contact (2 to 120 characters).");
+  }
   const whatsapp = normalizePhone(input.whatsapp);
   if (!whatsapp) throw new OnboardingValidationError("Enter a valid WhatsApp number (10 to 15 digits).");
   const email = normalizeEmail(input.email);
   if (!email) throw new OnboardingValidationError("Enter a valid email address.");
   const call = input.callSameAsWhatsapp ? whatsapp : normalizePhone(input.call);
   if (!call) throw new OnboardingValidationError("Enter a valid calling number (10 to 15 digits).");
-  return { whatsapp, email, call };
+  const setupRequirements = String(input.setupRequirements ?? "").trim();
+  if (setupRequirements.length < 10 || setupRequirements.length > 2000) {
+    throw new OnboardingValidationError("Describe the setup you need (10 to 2000 characters) so the specialist can prepare.");
+  }
+  return { contactName, whatsapp, email, call, setupRequirements };
 }
 
 export type RatingStage = "waiting" | "reminder" | "auto_complete";

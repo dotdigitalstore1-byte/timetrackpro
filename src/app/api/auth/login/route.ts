@@ -11,12 +11,14 @@ const DUMMY_HASH = "00".repeat(16) + ":" + "00".repeat(64);
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const email = String(body.email || "").trim().toLowerCase();
+    // Employees sign in with their email ID or username; anything containing "@" is treated as an email.
+    const identifier = String(body.identifier ?? body.email ?? "").trim().toLowerCase();
     const password = String(body.password || "");
 
-    if (!email || !password) {
-      return NextResponse.json({ error: "Email and password are required." }, { status: 400 });
+    if (!identifier || !password) {
+      return NextResponse.json({ error: "Email ID / username and password are required." }, { status: 400 });
     }
+    const email = identifier;
 
     // 8 attempts / 15 min per email, 40 / 15 min per IP
     const ipKey = `login:ip:${clientIp(req)}`;
@@ -35,18 +37,22 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, role: "super_admin" });
     }
 
-    const rows = await db.select().from(users).where(eq(users.email, email)).limit(1);
+    const rows = await db
+      .select()
+      .from(users)
+      .where(email.includes("@") ? eq(users.email, email) : eq(users.username, email))
+      .limit(1);
     const user = rows[0];
     const ok = verifyPassword(password, user ? user.passwordHash : DUMMY_HASH);
     if (!user || !ok) {
-      return NextResponse.json({ error: "Invalid email or password." }, { status: 401 });
+      return NextResponse.json({ error: "Invalid email ID / username or password." }, { status: 401 });
     }
     if (!user.isActive) {
       return NextResponse.json({ error: "This account has been deactivated." }, { status: 403 });
     }
     // Super admins are owned by the environment; a stored hash must never sign one in.
     if (user.role === "super_admin") {
-      return NextResponse.json({ error: "Invalid email or password." }, { status: 401 });
+      return NextResponse.json({ error: "Invalid email ID / username or password." }, { status: 401 });
     }
 
     await clearRateLimit(emailKey);

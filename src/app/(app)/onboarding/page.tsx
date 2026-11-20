@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/client";
-import { Badge, Button, Card, EmptyState, ErrorBanner, Input, PageHeader, Spinner } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, ErrorBanner, Input, PageHeader, Spinner, Textarea } from "@/components/ui";
 import { formatMoney } from "@/lib/utils";
 import { AUTO_COMPLETE_AFTER_HOURS, DEFAULT_AUTO_SATISFACTION } from "@/lib/onboarding-core";
 
@@ -65,8 +65,8 @@ function loadScript(src: string): Promise<void> {
 
 const STATUS: Record<string, { label: string; tone: "amber" | "indigo" | "sky" | "green" | "slate" }> = {
   open: { label: "Waiting for a specialist", tone: "amber" },
-  claimed: { label: "Specialist assigned", tone: "indigo" },
-  awaiting_rating: { label: "Setup complete: please rate", tone: "sky" },
+  claimed: { label: "Accepted", tone: "indigo" },
+  awaiting_rating: { label: "Work done: please rate", tone: "sky" },
   completed: { label: "Completed", tone: "green" },
 };
 
@@ -86,6 +86,8 @@ export default function ExpertOnboardingPage() {
   const [withOnboarding, setWithOnboarding] = useState(true);
   const [withEmployees, setWithEmployees] = useState(false);
   const [employeeCount, setEmployeeCount] = useState("5");
+  const [contactName, setContactName] = useState("");
+  const [setupRequirements, setSetupRequirements] = useState("");
   const [whatsapp, setWhatsapp] = useState("");
   const [email, setEmail] = useState("");
   const [call, setCall] = useState("");
@@ -161,6 +163,8 @@ export default function ExpertOnboardingPage() {
           includeOnboarding: withOnboarding,
           includeEmployees: withEmployees,
           employeeCount: Number(employeeCount) || 0,
+          contactName,
+          setupRequirements,
           whatsapp,
           email,
           call,
@@ -224,7 +228,8 @@ export default function ExpertOnboardingPage() {
     }
   };
 
-  const inputsInvalid = !whatsapp.trim() || !email.trim() || (!callSame && !call.trim());
+  const inputsInvalid =
+    !contactName.trim() || !setupRequirements.trim() || !whatsapp.trim() || !email.trim() || (!callSame && !call.trim());
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 pb-8">
@@ -292,6 +297,7 @@ export default function ExpertOnboardingPage() {
         <div className="space-y-3">
           <h2 className="text-base font-bold text-slate-900">2. How can our specialists reach you?</h2>
           <div className="grid gap-3 sm:grid-cols-2">
+            <Input label="Contact person's name" value={contactName} onChange={setContactName} placeholder="Full name of the person to contact" required />
             <Input label="WhatsApp number" type="tel" value={whatsapp} onChange={setWhatsapp} placeholder="+91 98xxxxxx" required />
             <Input label="Email ID" type="email" value={email} onChange={setEmail} placeholder="you@company.com" required />
           </div>
@@ -300,6 +306,13 @@ export default function ExpertOnboardingPage() {
             Same as WhatsApp number
           </label>
           {!callSame && <Input label="Calling number" type="tel" value={call} onChange={setCall} placeholder="+91 98xxxxxx" required />}
+          <Textarea
+            label="What exactly needs to be set up?"
+            value={setupRequirements}
+            onChange={setSetupRequirements}
+            rows={4}
+            placeholder="For example: 3 departments, 2 shifts, leave policy, biometric devices, employees to add (list names or roles)"
+          />
         </div>
 
         <div className="flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
@@ -338,6 +351,12 @@ export default function ExpertOnboardingPage() {
               {r.specialistName && (
                 <p className="text-sm text-slate-600">
                   Specialist: <span className="font-semibold text-slate-800">{r.specialistName}</span>
+                </p>
+              )}
+
+              {r.status === "claimed" && (
+                <p className="rounded-lg bg-indigo-50 px-3 py-2 text-sm text-indigo-800">
+                  {r.specialistName ?? "Your specialist"} will contact you and complete the onboarding setup within 48 hours.
                 </p>
               )}
 

@@ -559,3 +559,9 @@ Excuses are limited to admins in the interface. Managers with the "manage attend
 
 ### Fix: specialist creation failing (role too long)
 Run `migrations/2026-12-users-role-length.sql` once (idempotent). It widens `users.role` from `varchar(20)` to `varchar(50)`, because the `onboarding_specialist` role is 21 characters.
+
+### Expert Onboarding workflow + employee usernames
+Run `migrations/2026-12-specialist-workflow-usernames.sql` once (idempotent). It adds:
+- `users.username`, unique across the whole platform (stored lowercase), used by employees to sign in.
+- `onboarding_requests.contact_name` and `setup_requirements`, captured at checkout and shown to the specialist in My Work.
+

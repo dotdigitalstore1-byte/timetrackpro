@@ -16,6 +16,8 @@ export async function POST(req: Request) {
       includeEmployees: !!body.includeEmployees,
       employeeCount: Number(body.employeeCount ?? 0),
       contact: {
+        contactName: String(body.contactName ?? ""),
+        setupRequirements: String(body.setupRequirements ?? ""),
         whatsapp: String(body.whatsapp ?? ""),
         email: String(body.email ?? ""),
         call: String(body.call ?? ""),

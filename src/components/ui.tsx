@@ -118,6 +118,9 @@ export function Input({
   className,
   disabled,
   invalid,
+  autoComplete,
+  autoCapitalize,
+  spellCheck,
 }: {
   label?: string;
   type?: string;
@@ -132,6 +135,9 @@ export function Input({
   disabled?: boolean;
   /** Marks the field red when its value is not allowed. */
   invalid?: boolean;
+  autoComplete?: string;
+  autoCapitalize?: "none" | "sentences" | "words" | "characters";
+  spellCheck?: boolean;
 }) {
   return (
     <label className={cn("block", className)}>
@@ -145,6 +151,9 @@ export function Input({
         max={max}
         step={step}
         placeholder={placeholder}
+        autoComplete={autoComplete}
+        autoCapitalize={autoCapitalize}
+        spellCheck={spellCheck}
         aria-invalid={invalid || undefined}
         onChange={(e) => onChange(e.target.value)}
         className={cn(

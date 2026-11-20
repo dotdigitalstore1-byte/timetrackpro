@@ -8,7 +8,7 @@ import { Button, Card, Input } from "@/components/ui";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -20,7 +20,7 @@ export default function LoginPage() {
     try {
       const res = await api<{ role: string }>("/api/auth/login", {
         method: "POST",
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ identifier, password }),
       });
       clearMe();
       if (res.role === "super_admin") {
@@ -59,13 +59,22 @@ export default function LoginPage() {
               void submit();
             }}
           >
-            <Input label="Email" type="email" value={email} onChange={setEmail} placeholder="you@company.com" />
+            <Input
+              label="Email ID / Username"
+              type="text"
+              value={identifier}
+              onChange={setIdentifier}
+              placeholder="you@company.com or your username"
+              autoComplete="username"
+              autoCapitalize="none"
+              spellCheck={false}
+            />
             <Input label="Password" type="password" value={password} onChange={setPassword} placeholder="••••••••" />
             <div className="-mt-1 text-right">
               <Link href="/forgot-password" className="text-xs font-semibold text-indigo-600 hover:underline">Forgot password?</Link>
             </div>
             {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">{error}</p>}
-            <Button className="w-full" loading={loading} type="submit" disabled={!email || !password}>
+            <Button className="w-full" loading={loading} type="submit" disabled={!identifier.trim() || !password}>
               Sign In
             </Button>
           </form>
@@ -78,7 +87,7 @@ export default function LoginPage() {
         </Card>
 
         <p className="mt-4 text-center text-xs text-indigo-200">
-          Employees sign in with the email and password given by their company administrator.
+          Employees sign in with their Email ID or username, and the password given by their company administrator.
         </p>
       </div>
     </div>

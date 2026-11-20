@@ -21,6 +21,7 @@ interface EmployeeRow {
   userId: string;
   fullName: string;
   email: string;
+  username: string | null;
   phone: string | null;
   role: string;
   isActive: boolean;
@@ -39,6 +40,7 @@ interface EmployeeRow {
 
 const emptyForm = {
   fullName: "",
+  username: "",
   email: "",
   password: "",
   role: "employee",
@@ -94,6 +96,37 @@ export default function EmployeesPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  // Live username check: "idle" | "checking" | "available" | "taken" | "invalid" | "error"
+  const [unameCheck, setUnameCheck] = useState<{ status: string; message: string }>({ status: "idle", message: "" });
+
+  // Real-time availability across the whole platform. Debounced; stale responses are ignored.
+  useEffect(() => {
+    if (editing || !modalOpen) return;
+    const raw = form.username.trim();
+    if (!raw) {
+      setUnameCheck({ status: "idle", message: "" });
+      return;
+    }
+    if (raw.includes("@")) {
+      setUnameCheck({ status: "invalid", message: "Email IDs are not accepted here. Please enter a username." });
+      return;
+    }
+    setUnameCheck({ status: "checking", message: "Checking availability…" });
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      api<{ available: boolean; message: string }>(`/api/employees/username-check?username=${encodeURIComponent(raw)}`)
+        .then((r) => {
+          if (!cancelled) setUnameCheck({ status: r.available ? "available" : "taken", message: r.message });
+        })
+        .catch(() => {
+          if (!cancelled) setUnameCheck({ status: "error", message: "Could not check availability. Check your connection and try again." });
+        });
+    }, 350);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [form.username, editing, modalOpen]);
 
   const load = useCallback(async () => {
     setLoadError("");
@@ -123,7 +156,7 @@ export default function EmployeesPage() {
     const q = search.trim().toLowerCase();
     if (!q) return employees;
     return employees.filter((e) =>
-      [e.fullName, e.email, e.employeeCode, e.department, e.designation, e.role, ...e.locations.map((l) => l.name)]
+      [e.fullName, e.username ?? "", e.email, e.employeeCode, e.department, e.designation, e.role, ...e.locations.map((l) => l.name)]
         .filter(Boolean)
         .some((v) => String(v).toLowerCase().includes(q))
     );
@@ -149,6 +182,7 @@ export default function EmployeesPage() {
     setEditing(e);
     setForm({
       fullName: e.fullName,
+      username: e.username ?? "",
       email: e.email,
       password: "",
       role: e.role,
@@ -182,6 +216,10 @@ export default function EmployeesPage() {
     }
     if (form.shiftEnd <= form.shiftStart) {
       setError("Punch-out time must be later than punch-in time.");
+      return;
+    }
+    if (!editing && unameCheck.status !== "available") {
+      setError(unameCheck.status === "invalid" || unameCheck.status === "taken" ? unameCheck.message : "Choose an available username before saving.");
       return;
     }
     setSaving(true);
@@ -298,7 +336,7 @@ export default function EmployeesPage() {
                   <tr key={e.id} className="hover:bg-slate-50/60">
                     <td className="px-4 py-3">
                       <p className="font-bold text-slate-800">{e.fullName}</p>
-                      <p className="text-xs text-slate-400">{e.email} · {e.employeeCode || "—"}</p>
+                      <p className="text-xs text-slate-400">{e.username ? `${e.username} · ` : ""}{e.email} · {e.employeeCode || "—"}</p>
                     </td>
                     <td className="px-4 py-3">
                       <Badge tone={e.role === "manager" ? "indigo" : "slate"}>{e.role}</Badge>
@@ -338,7 +376,7 @@ export default function EmployeesPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="truncate font-bold text-slate-800">{e.fullName}</p>
-                    <p className="truncate text-xs text-slate-400">{e.email}</p>
+                    <p className="truncate text-xs text-slate-400">{e.username ? `${e.username} · ` : ""}{e.email}</p>
                   </div>
                   <Badge tone={e.isActive ? "green" : "red"}>{e.isActive ? "Active" : "Inactive"}</Badge>
                 </div>
@@ -403,7 +441,43 @@ export default function EmployeesPage() {
       <Modal open={modalOpen} onClose={() => setModalOpen(false)} title={editing ? `Edit ${editing.fullName}` : "Add Employee"}>
         <div className="space-y-3">
           <Input label="Full name" value={form.fullName} onChange={(v) => setForm({ ...form, fullName: v })} />
-          <Input label={editing ? "Email (cannot be changed)" : "Email"} type="email" disabled={!!editing} value={form.email} onChange={(v) => setForm({ ...form, email: v })} />
+          {!editing && (
+            <div className="space-y-1.5">
+              <Input
+                label="Username (used to sign in)"
+                value={form.username}
+                onChange={(v) => setForm({ ...form, username: v })}
+                placeholder="e.g. asif.k or asif_01"
+                autoCapitalize="none"
+                spellCheck={false}
+                invalid={unameCheck.status === "invalid" || unameCheck.status === "taken"}
+              />
+              {unameCheck.message && (
+                <p
+                  role="status"
+                  className={`text-xs font-semibold ${
+                    unameCheck.status === "available"
+                      ? "text-emerald-700"
+                      : unameCheck.status === "checking"
+                        ? "text-slate-500"
+                        : "text-rose-600"
+                  }`}
+                >
+                  {unameCheck.status === "available" ? "✓ " : ""}
+                  {unameCheck.message}
+                </p>
+              )}
+              <p className="text-xs text-slate-500">Choose a username that is not used anywhere on the platform. Use letters, numbers or symbols, with no spaces.</p>
+            </div>
+          )}
+          <Input
+            label={editing ? "Email ID (cannot be changed)" : "Email ID (for reference)"}
+            type="email"
+            disabled={!!editing}
+            value={form.email}
+            onChange={(v) => setForm({ ...form, email: v })}
+            placeholder="name@company.com"
+          />
           <Input
             label={editing ? "New password (leave blank to keep current)" : "Password (min 8 chars)"}
             type="password"

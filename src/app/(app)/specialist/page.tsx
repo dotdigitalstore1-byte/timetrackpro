@@ -17,6 +17,15 @@ interface OpenRow {
   releaseCount: number;
 }
 
+interface ClientInfo {
+  companyName: string;
+  contactName: string | null;
+  whatsapp: string;
+  email: string;
+  call: string;
+  setupRequirements: string | null;
+}
+
 interface MineRow {
   id: string;
   status: "claimed" | "awaiting_rating" | "completed";
@@ -31,7 +40,7 @@ interface MineRow {
   satisfaction: number | null;
   flagReason: string | null;
   delayed: boolean;
-  client: { companyName: string; whatsapp: string; email: string; call: string } | null;
+  client: ClientInfo;
 }
 
 interface QueueData {
@@ -44,8 +53,8 @@ interface QueueData {
 }
 
 const STATUS_LABEL: Record<MineRow["status"], { label: string; tone: "indigo" | "sky" | "green" }> = {
-  claimed: { label: "In progress", tone: "indigo" },
-  awaiting_rating: { label: "Waiting for client rating", tone: "sky" },
+  claimed: { label: "In My Work", tone: "indigo" },
+  awaiting_rating: { label: "Waiting for Client Rating", tone: "sky" },
   completed: { label: "Completed", tone: "green" },
 };
 
@@ -57,6 +66,45 @@ function services(r: { includeOnboarding: boolean; includeEmployees: boolean; em
 }
 
 const digitsOnly = (v: string) => v.replace(/[^\d]/g, "");
+
+function Detail({ label, value, href, external, wide }: { label: string; value: string | null; href?: string; external?: boolean; wide?: boolean }) {
+  return (
+    <div className={`min-w-0 ${wide ? "sm:col-span-2" : ""}`}>
+      <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</dt>
+      <dd className="mt-0.5 break-words font-semibold text-slate-900">
+        {value && href ? (
+          <a href={href} target={external ? "_blank" : undefined} rel="noopener noreferrer" className="text-indigo-700 underline-offset-2 hover:underline">
+            {value}
+          </a>
+        ) : (
+          value || <span className="font-normal italic text-slate-400">Not recorded</span>
+        )}
+      </dd>
+    </div>
+  );
+}
+
+/** Full client details. Shown in My Work and kept on Completed cards so the specialist can refer back to them. */
+function ClientDetails({ client }: { client: ClientInfo }) {
+  return (
+    <dl className="grid grid-cols-1 gap-3 rounded-xl border border-slate-200 bg-white p-3 text-sm sm:grid-cols-2">
+      <Detail label="Company name" value={client.companyName} wide />
+      <Detail label="Contact name" value={client.contactName} />
+      <Detail label="WhatsApp" value={client.whatsapp} href={`https://wa.me/${digitsOnly(client.whatsapp)}`} external />
+      <Detail label="Calling number" value={client.call} href={`tel:${client.call}`} />
+      <Detail label="Email ID" value={client.email} href={`mailto:${client.email}`} />
+    </dl>
+  );
+}
+
+function SetupRequirements({ text }: { text: string | null }) {
+  return (
+    <div className="rounded-xl bg-slate-50 p-3">
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Exact setup requirements</p>
+      <p className="mt-1 whitespace-pre-wrap break-words text-sm text-slate-800">{text || "No requirements were recorded for this request."}</p>
+    </div>
+  );
+}
 
 export default function SpecialistQueuePage() {
   const [data, setData] = useState<QueueData | null>(null);
@@ -89,13 +137,14 @@ export default function SpecialistQueuePage() {
     return () => window.removeEventListener("focus", onFocus);
   }, [load]);
 
-  const act = async (id: string, body: Record<string, unknown>, success: string) => {
+  const act = async (id: string, body: Record<string, unknown>, success: string, next?: "open" | "mine" | "done") => {
     setBusyId(id);
     setError("");
     setNotice("");
     try {
       await api(`/api/specialist/requests/${id}`, { method: "POST", body: JSON.stringify(body) });
       setNotice(success);
+      if (next) setTab(next);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "That did not work. Please try again.");
@@ -144,7 +193,7 @@ export default function SpecialistQueuePage() {
             <Card>
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">In your hands</p>
               <p className="mt-1 text-2xl font-bold text-slate-900">{active.length}</p>
-              <p className="text-xs text-slate-500">{data.open.length} open in the queue</p>
+              <p className="text-xs text-slate-500">{active.length === 1 ? "1 request in My Work" : `${active.length} requests in My Work`} · {data.open.length} open</p>
             </Card>
           </div>
 
@@ -152,7 +201,7 @@ export default function SpecialistQueuePage() {
             {(
               [
                 ["open", `Open queue (${data.open.length})`],
-                ["mine", `My work (${active.length})`],
+                ["mine", `My Work (${active.length})`],
                 ["done", `Completed (${finished.length})`],
               ] as const
             ).map(([key, label]) => (
@@ -194,7 +243,7 @@ export default function SpecialistQueuePage() {
                       <p className="font-bold text-slate-900">{r.commissionPercent}%</p>
                     </div>
                   </div>
-                  <Button onClick={() => void act(r.id, { action: "claim" }, "Request accepted. The client's details are now unlocked.")} loading={busyId === r.id} className="w-full">
+                  <Button onClick={() => void act(r.id, { action: "claim" }, "Accepted. The request is now in My Work with the client's details.", "mine")} loading={busyId === r.id} className="w-full">
                     Accept request
                   </Button>
                 </Card>
@@ -204,12 +253,12 @@ export default function SpecialistQueuePage() {
 
           {tab === "mine" && (
             <section className="space-y-3">
-              {active.length === 0 && <EmptyState message="You have no requests in progress. Accept one from the open queue." />}
+              {active.length === 0 && <EmptyState message="You have no requests in My Work. Accept one from the open queue." />}
               {active.map((r) => (
                 <Card key={r.id} className="space-y-4">
                   <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div>
-                      <p className="text-base font-bold text-slate-900">{r.client?.companyName}</p>
+                    <div className="min-w-0">
+                      <p className="break-words text-lg font-bold text-slate-900">{r.client.companyName}</p>
                       <p className="text-sm text-slate-600">{services(r)}</p>
                     </div>
                     <div className="flex flex-wrap gap-1">
@@ -218,30 +267,28 @@ export default function SpecialistQueuePage() {
                     </div>
                   </div>
 
-                  {r.client && (
-                    <div className="grid gap-2 rounded-xl border border-slate-200 p-3 text-sm sm:grid-cols-3">
-                      <a href={`https://wa.me/${digitsOnly(r.client.whatsapp)}`} target="_blank" rel="noopener noreferrer" className="min-h-[44px] rounded-lg bg-emerald-50 px-3 py-2 font-semibold text-emerald-700">
-                        WhatsApp {r.client.whatsapp}
-                      </a>
-                      <a href={`mailto:${r.client.email}`} className="min-h-[44px] break-all rounded-lg bg-indigo-50 px-3 py-2 font-semibold text-indigo-700">
-                        {r.client.email}
-                      </a>
-                      <a href={`tel:${r.client.call}`} className="min-h-[44px] rounded-lg bg-slate-100 px-3 py-2 font-semibold text-slate-700">
-                        Call {r.client.call}
-                      </a>
-                    </div>
-                  )}
+                  <ClientDetails client={r.client} />
+                  <SetupRequirements text={r.client.setupRequirements} />
 
                   {r.flagReason && <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">Your flag: {r.flagReason}</p>}
 
+                  <p className="text-xs text-slate-500">Contact the client and finish the setup. Press Work Done only after it is complete.</p>
                   <div className="grid gap-2 sm:grid-cols-3">
-                    <Button onClick={() => void act(r.id, { action: "complete" }, "Marked complete. The client has been asked to rate it.")} loading={busyId === r.id}>
-                      Mark complete
+                    <Button
+                      className="w-full"
+                      loading={busyId === r.id}
+                      onClick={() => {
+                        if (confirm("Mark this as work done? The client will be asked to rate the onboarding.")) {
+                          void act(r.id, { action: "complete" }, "Work done. The request is in Completed, waiting for the client's rating.", "done");
+                        }
+                      }}
+                    >
+                      Work Done / Request Review
                     </Button>
-                    <Button variant="secondary" onClick={() => { setFlagging(r); setFlagText(r.flagReason ?? ""); }}>
+                    <Button variant="secondary" className="w-full" onClick={() => { setFlagging(r); setFlagText(r.flagReason ?? ""); }}>
                       Flag an issue
                     </Button>
-                    <Button variant="danger" onClick={() => { setReleasing(r); setReleaseNote(""); }}>
+                    <Button variant="danger" className="w-full" onClick={() => { setReleasing(r); setReleaseNote(""); }}>
                       Release
                     </Button>
                   </div>
@@ -252,22 +299,30 @@ export default function SpecialistQueuePage() {
 
           {tab === "done" && (
             <section className="space-y-3">
-              {finished.length === 0 && <EmptyState message="Completed requests will show here with their rating and commission." />}
+              {finished.length === 0 && <EmptyState message="Requests you have finished will show here with their rating and commission." />}
               {finished.map((r) => {
                 const s = STATUS_LABEL[r.status];
                 return (
-                  <Card key={r.id} className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <p className="font-semibold text-slate-900">{services(r)}</p>
-                      <p className="text-xs text-slate-500">
-                        {r.completedAt ? new Date(r.completedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : ""}
-                        {r.satisfaction !== null ? ` · satisfaction ${r.satisfaction}%` : ""}
-                      </p>
+                  <Card key={r.id} className="space-y-3">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="break-words text-lg font-bold text-slate-900">{r.client.companyName}</p>
+                        <p className="text-sm text-slate-600">{services(r)}</p>
+                        <p className="text-xs text-slate-500">
+                          {r.completedAt ? new Date(r.completedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : ""}
+                          {r.satisfaction !== null ? ` · satisfaction ${r.satisfaction}%` : ""}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <Badge tone={s.tone}>{s.label}</Badge>
+                        <p className="mt-1 text-sm font-bold text-slate-900">{r.commissionAmount !== null ? formatMoney(r.commissionAmount, 2) : "—"}</p>
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <Badge tone={s.tone}>{s.label}</Badge>
-                      <p className="mt-1 text-sm font-bold text-slate-900">{r.commissionAmount !== null ? formatMoney(r.commissionAmount, 2) : "—"}</p>
-                    </div>
+                    <ClientDetails client={r.client} />
+                    <details className="rounded-xl bg-slate-50 p-3 text-sm">
+                      <summary className="cursor-pointer font-semibold text-slate-700">View setup requirements</summary>
+                      <p className="mt-2 whitespace-pre-wrap break-words text-slate-800">{r.client.setupRequirements || "No requirements were recorded for this request."}</p>
+                    </details>
                   </Card>
                 );
               })}

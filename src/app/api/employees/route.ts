@@ -9,6 +9,7 @@ import { shiftOf } from "@/lib/company";
 import { loadEmployeeOrg, parseIdList, replaceEmployeeOrg, validateOrgIds } from "@/lib/org";
 import { isValidHHMM, parseHHMM } from "@/lib/payroll";
 import { seatBlock } from "@/lib/billing";
+import { parseUsername } from "@/lib/username";
 
 export async function GET() {
   const ctx = await getAuth();
@@ -36,6 +37,7 @@ export async function GET() {
       userId: r.users.id,
       fullName: r.users.fullName,
       email: r.users.email,
+      username: r.users.username,
       phone: r.users.phone,
       role: r.users.role,
       isActive: r.users.isActive,
@@ -70,6 +72,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Create managers from the Managers page." }, { status: 400 });
   }
   const fullName = String(body.fullName || "").trim();
+  // Login name: required, unique across the whole platform, never an email ID.
+  const usernameParsed = parseUsername(String(body.username || ""));
+  // Email ID is kept on record for reference (and for password resets).
   const email = String(body.email || "").trim().toLowerCase();
   const password = String(body.password || "");
   const role = "employee";
@@ -95,8 +100,11 @@ export async function POST(req: Request) {
   const basicSalary = access.isAdmin ? String(Number(body.basicSalary) || "0") : "0";
   const phone = String(body.phone || "").trim();
 
+  if (!usernameParsed.ok) return NextResponse.json({ error: usernameParsed.error }, { status: 400 });
+  const username = usernameParsed.value;
+
   if (!fullName || !email || password.length < 8) {
-    return NextResponse.json({ error: "Name, email and a password (min 8 chars) are required." }, { status: 400 });
+    return NextResponse.json({ error: "Name, email ID and a password (min 8 chars) are required." }, { status: 400 });
   }
 
   if (departmentIds.length === 0) {
@@ -111,6 +119,11 @@ export async function POST(req: Request) {
   const existing = await db.select().from(users).where(eq(users.email, email)).limit(1);
   if (existing.length > 0) {
     return NextResponse.json({ error: "A user with this email already exists." }, { status: 409 });
+  }
+  // Usernames are global: the same name cannot be used by any other company.
+  const takenName = await db.select({ id: users.id }).from(users).where(eq(users.username, username)).limit(1);
+  if (takenName.length > 0) {
+    return NextResponse.json({ error: "That username is already taken. Try a variation, such as adding an initial." }, { status: 409 });
   }
   if (typedCode) {
     const owner = await codeOwner(companyId, typedCode);
@@ -140,7 +153,7 @@ export async function POST(req: Request) {
       const empId = await db.transaction(async (tx) => {
         const [user] = await tx
           .insert(users)
-          .values({ companyId, email, passwordHash: hashPassword(password), fullName, role, phone })
+          .values({ companyId, email, username, passwordHash: hashPassword(password), fullName, role, phone })
           .returning();
 
         const employeeCode = typedCode || (await nextEmployeeCode(companyId, tx));
@@ -157,7 +170,7 @@ export async function POST(req: Request) {
           action: "employee.create",
           entity: "employee",
           entityId: emp.id,
-          details: { fullName, email, role, employeeCode, designation, shiftStart, shiftEnd, basicSalary, departmentIds, locationIds, createdByRole: ctx.user.role },
+          details: { fullName, email, username, role, employeeCode, designation, shiftStart, shiftEnd, basicSalary, departmentIds, locationIds, createdByRole: ctx.user.role },
         });
         return emp.id;
       });
@@ -165,6 +178,10 @@ export async function POST(req: Request) {
     } catch (e) {
       const err = e as { code?: string; constraint?: string };
       if (err.code === "23505" && err.constraint === "employees_company_code_uniq" && !typedCode && attempt < 3) continue;
+      // Two admins picking the same username at the same moment: the unique index decides the winner.
+      if (err.code === "23505" && err.constraint === "users_username_uq") {
+        return NextResponse.json({ error: "That username was just taken. Please choose another." }, { status: 409 });
+      }
       if (err.code === "23505" && err.constraint === "employees_company_code_uniq") {
         return NextResponse.json({ error: `Employee code ${typedCode} is already in use.` }, { status: 409 });
       }

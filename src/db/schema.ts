@@ -117,6 +117,8 @@ export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
   companyId: uuid("company_id").references(() => companies.id, { onDelete: "cascade" }),
   email: varchar("email", { length: 200 }).notNull().unique(),
+  // Employee login name (lowercase, unique platform-wide). Optional: accounts created before usernames have none.
+  username: varchar("username", { length: 30 }),
   passwordHash: text("password_hash").notNull(),
   fullName: varchar("full_name", { length: 200 }).notNull(),
   role: varchar("role", { length: 50 }).notNull().default("employee"), // super_admin | company_admin | manager | employee
@@ -129,7 +131,7 @@ export const users = pgTable("users", {
   // When the notification centre was last opened. Items newer than this are unread.
   notificationsSeenAt: timestamp("notifications_seen_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [uniqueIndex("users_username_uq").on(t.username)]);
 
 export const sessions = pgTable("sessions", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -846,6 +848,8 @@ export const onboardingRequests = pgTable(
     contactWhatsapp: varchar("contact_whatsapp", { length: 20 }).notNull(),
     contactEmail: varchar("contact_email", { length: 200 }).notNull(),
     contactCall: varchar("contact_call", { length: 20 }).notNull(),
+    contactName: varchar("contact_name", { length: 120 }), // person the specialist should contact
+    setupRequirements: text("setup_requirements"), // what the client needs set up
     // pending_payment | open | claimed | awaiting_rating | completed
     status: varchar("status", { length: 20 }).notNull().default("pending_payment"),
     providerOrderId: varchar("provider_order_id", { length: 120 }),
