@@ -4,16 +4,16 @@ import "./globals.css";
 import PwaRegister from "@/components/PwaRegister";
 
 export const metadata: Metadata = {
-  title: "TimeTrack Pro — Attendance & Salary Management",
+  title: "Dotinout (DIO) — Attendance & Salary Management",
   description:
     "Multi-company attendance, leave and salary management SaaS platform with photo-verified punches, GPS geofencing and payroll automation.",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "TimeTrack",
+    title: "Dotinout",
   },
-  applicationName: "TimeTrack Pro",
+  applicationName: "Dotinout",
   formatDetection: { telephone: false },
 };
 

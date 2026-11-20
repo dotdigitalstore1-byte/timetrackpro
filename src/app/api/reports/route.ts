@@ -187,7 +187,7 @@ export async function GET(req: Request) {
   if (format === "xlsx") {
     const ExcelJS = (await import("exceljs")).default;
     const wb = new ExcelJS.Workbook();
-    wb.creator = ctx.company?.name ?? "TimeTrack";
+    wb.creator = ctx.company?.name ?? "Dotinout";
     const ws = wb.addWorksheet(report.slice(0, 31));
     const headers = rows.length ? Object.keys(rows[0]) : ["No data"];
     ws.addRow(headers);

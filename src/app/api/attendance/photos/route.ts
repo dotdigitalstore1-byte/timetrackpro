@@ -187,7 +187,7 @@ export async function GET(req: Request) {
   // ---- Excel export
   const ExcelJS = (await import("exceljs")).default;
   const wb = new ExcelJS.Workbook();
-  wb.creator = "TimeTrack Pro";
+  wb.creator = "Dotinout";
   const ws = wb.addWorksheet("Attendance");
   ws.columns = [
     { header: "Date", key: "date", width: 12 },

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { BrandMark } from "@/components/Brand";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, clearMe } from "@/lib/client";
@@ -246,12 +247,8 @@ export default function BillingPage() {
       <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 pt-[env(safe-area-inset-top)] backdrop-blur">
         <div className="mx-auto flex max-w-4xl items-center justify-between gap-3 px-4 py-3">
           <Link href="/" className="flex min-w-0 items-center gap-2 font-bold text-slate-900">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white">
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2} aria-hidden>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </span>
-            <span className="truncate">TimeTrack Pro</span>
+            <BrandMark className="h-8 w-8 shrink-0 rounded-lg" />
+            <span className="truncate">Dotinout</span>
           </Link>
           <div className="flex shrink-0 items-center gap-3 text-sm">
             {data && !data.access.locked && (

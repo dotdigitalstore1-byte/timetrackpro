@@ -1,5 +1,6 @@
 "use client";
 
+import { homePathFor } from "@/lib/home";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, useMe } from "@/lib/client";
@@ -163,7 +164,7 @@ export default function ProfilePage() {
           {error && <p className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">{error}</p>}
 
           <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <Button variant="secondary" onClick={() => router.push(me.user.role === "super_admin" ? "/superadmin" : "/dashboard")}>
+            <Button variant="secondary" onClick={() => router.push(homePathFor(me.user.role))}>
               Cancel
             </Button>
             <Button onClick={save} loading={saving}>

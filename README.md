@@ -1,4 +1,4 @@
-# TimeTrack Pro — multi-company attendance & salary SaaS
+# Dotinout (DIO) — multi-company attendance & salary SaaS
 
 Next.js 16 (App Router) + TypeScript + Tailwind + PostgreSQL (Drizzle ORM). Installable PWA that works as
 a mobile app (Android/desktop install) and a responsive web app.
@@ -199,7 +199,7 @@ deployed site, so the web app and the mobile app share one codebase and one set 
 
 ```bash
 npm i @capacitor/core @capacitor/cli @capacitor/android @capacitor/ios
-npx cap init "TimeTrack" com.yourcompany.timetrack --web-dir=public
+npx cap init "Dotinout" com.yourcompany.timetrack --web-dir=public
 # capacitor.config.ts: server: { url: "https://YOUR-DEPLOYED-SITE", cleartext: false }
 npx cap add android && npx cap add ios
 npx cap sync && npx cap open android      # or: npx cap open ios
@@ -564,4 +564,10 @@ Run `migrations/2026-12-users-role-length.sql` once (idempotent). It widens `use
 Run `migrations/2026-12-specialist-workflow-usernames.sql` once (idempotent). It adds:
 - `users.username`, unique across the whole platform (stored lowercase), used by employees to sign in.
 - `onboarding_requests.contact_name` and `setup_requirements`, captured at checkout and shown to the specialist in My Work.
+
+### Routing, Expert Specialist login and Dotinout branding
+- Every role's home page is defined once in `src/lib/home.ts`. The installed app opens `/open`, which sends each signed-in role to its own home (specialists to `/specialist`, staff and admins to `/dashboard`).
+- The specialist area is isolated by role in `AppShell`: specialists cannot open attendance pages, and other roles cannot open `/specialist`.
+- Expert Specialists have a dedicated sign-in at `/login/specialist`, linked from the top-right of `/login`. The login API rejects non-specialist accounts on that page.
+- Brand: the logo and wordmark live in `src/components/Brand.tsx`. App icons are in `public/icons`. The Android bridge name `TimeTrackNative` and the Capacitor app ID `com.yourcompany.timetrack` are intentionally unchanged so existing native builds keep working.
 

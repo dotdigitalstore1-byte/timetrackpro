@@ -53,12 +53,16 @@ test("must choose at least one service and a positive headcount when adding empl
 });
 
 test("contact: same-as-WhatsApp copies the number; otherwise the calling number is validated", () => {
-  const same = normalizeContact({ whatsapp: "+91 98765-43210", email: "Ops@Acme.IN", call: "", callSameAsWhatsapp: true });
-  assert.equal(same.call, "+919876543210");
+  const base = { contactName: "Asha Rao", email: "Ops@Acme.IN", setupRequirements: "Two departments and a leave policy" };
+  const same = normalizeContact({ ...base, whatsapp: "+91 98765-43210", call: "", callSameAsWhatsapp: true });
+  assert.equal(same.call, same.whatsapp);
   assert.equal(same.email, "ops@acme.in");
-  assert.throws(() => normalizeContact({ whatsapp: "12", email: "a@b.co", call: "", callSameAsWhatsapp: true }));
-  assert.throws(() => normalizeContact({ whatsapp: "9876543210", email: "bad", call: "", callSameAsWhatsapp: true }));
-  assert.throws(() => normalizeContact({ whatsapp: "9876543210", email: "a@b.co", call: "abc", callSameAsWhatsapp: false }));
+  assert.equal(same.contactName, "Asha Rao");
+  assert.throws(() => normalizeContact({ ...base, whatsapp: "12", call: "", callSameAsWhatsapp: true }));
+  assert.throws(() => normalizeContact({ ...base, whatsapp: "9876543210", email: "bad", call: "", callSameAsWhatsapp: true }));
+  assert.throws(() => normalizeContact({ ...base, whatsapp: "9876543210", call: "abc", callSameAsWhatsapp: false }));
+  assert.throws(() => normalizeContact({ ...base, contactName: "A", whatsapp: "9876543210", call: "", callSameAsWhatsapp: true }));
+  assert.throws(() => normalizeContact({ ...base, setupRequirements: "short", whatsapp: "9876543210", call: "", callSameAsWhatsapp: true }));
 });
 
 test("commission: specialist override beats the global default; amounts round to paise", () => {

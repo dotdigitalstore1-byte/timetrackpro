@@ -275,7 +275,7 @@ export async function createOnboardingOrder(input: OrderInput) {
       keyId,
       amountMinor: toMinorUnits(quote.total),
       currency: "INR",
-      name: "TimeTrack Pro",
+      name: "Dotinout",
       description: "Expert Onboarding",
       prefill: {
         name: user.fullName,

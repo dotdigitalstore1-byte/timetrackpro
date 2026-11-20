@@ -4,9 +4,10 @@ import { getAuthAllowLocked } from "@/lib/auth";
 import { loadPricing, serializeCycle, serializePlan } from "@/lib/billing";
 import { TRIAL_DAYS } from "@/lib/billing-core";
 import PlanPicker from "@/components/PlanPicker";
+import { BrandMark } from "@/components/Brand";
 
 export const metadata: Metadata = {
-  title: "TimeTrack Pro · Attendance, leave and payroll for growing teams",
+  title: "Dotinout · Attendance, leave and payroll for growing teams",
   description: `Photo-verified attendance, leave, payroll and reports in one place. Start a ${TRIAL_DAYS}-day free trial. No credit card.`,
 };
 
@@ -73,12 +74,10 @@ const FAQ = [
 function Logo() {
   return (
     <span className="flex items-center gap-2">
-      <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/15 text-white ring-1 ring-white/20">
-        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
+      <BrandMark className="h-9 w-9 rounded-xl" />
+      <span className="text-lg font-extrabold leading-none tracking-tight text-white">
+        Dot<span className="text-indigo-300">in</span><span className="text-violet-300">out</span>
       </span>
-      <span className="text-base font-bold tracking-tight">TimeTrack Pro</span>
     </span>
   );
 }
@@ -212,7 +211,7 @@ export default async function LandingPage() {
 
       <footer className="border-t border-slate-200 py-8">
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-5 text-sm text-slate-500 sm:flex-row">
-          <span>© {new Date().getFullYear()} TimeTrack Pro</span>
+          <span>© {new Date().getFullYear()} Dotinout (DIO)</span>
           <div className="flex gap-4">
             <Link href="/login" className="hover:text-slate-800">Sign in</Link>
             <Link href="/register" className="hover:text-slate-800">Register</Link>

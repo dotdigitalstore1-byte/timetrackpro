@@ -1,5 +1,5 @@
 {
-  "name": "timetrack-pro",
+  "name": "dotinout",
   "private": true,
   "scripts": {
     "dev": "next dev",

@@ -21,10 +21,10 @@ interface Message {
 }
 
 function buildMessage(to: string, code: string, label: string, purpose: OtpPurpose): Message {
-  const subject = purpose === "reset" ? "Your TimeTrack Pro password reset code" : "Your TimeTrack Pro verification code";
+  const subject = purpose === "reset" ? "Your Dotinout password reset code" : "Your Dotinout verification code";
   const intro =
     purpose === "reset"
-      ? `Your code to reset the password for your TimeTrack Pro account (${label}) is:`
+      ? `Your code to reset the password for your Dotinout account (${label}) is:`
       : `Your verification code to create the workspace "${label}" is:`;
   const text =
     `Hi,\n\n${intro}\n\n${code}\n\n` +
@@ -49,7 +49,7 @@ async function sendViaZeptoMail(msg: Message, env: NodeJS.ProcessEnv): Promise<s
       Accept: "application/json",
     },
     body: JSON.stringify({
-      from: { address: from, name: env.MAIL_FROM_NAME || "TimeTrack Pro" },
+      from: { address: from, name: env.MAIL_FROM_NAME || "Dotinout" },
       to: [{ email_address: { address: msg.to, name: msg.to } }],
       subject: msg.subject,
       textbody: msg.text,
@@ -110,7 +110,7 @@ export async function deliverOtp(to: string, code: string, label: string, purpos
       [
         "",
         "==================================================",
-        ` TimeTrack Pro - ${purpose === "reset" ? "password reset" : "email verification"} code (development only)`,
+        ` Dotinout - ${purpose === "reset" ? "password reset" : "email verification"} code (development only)`,
         `  Reason : ${failure}`,
         `  To     : ${to}`,
         `  Code   : ${code}  (valid ${OTP_TTL_MINUTES} minutes)`,

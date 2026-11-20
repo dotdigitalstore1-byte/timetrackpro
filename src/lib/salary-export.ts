@@ -334,7 +334,7 @@ function writeEmployeeSheet(wb: ExcelJS.Workbook, e: ExportEmployee, o: ExportOp
 /** Builds the whole salary workbook for the chosen grouping. */
 export async function buildSalaryWorkbook(o: ExportOptions): Promise<ExcelJS.Workbook> {
   const wb = new ExcelJS.Workbook();
-  wb.creator = "TimeTrack Pro";
+  wb.creator = "Dotinout";
   const used = new Set<string>();
   writeSummary(wb, o, used);
 

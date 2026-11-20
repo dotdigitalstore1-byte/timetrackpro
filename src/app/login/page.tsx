@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, clearMe } from "@/lib/client";
 import { Button, Card, Input } from "@/components/ui";
+import { BrandLockup } from "@/components/Brand";
+import { homePathFor } from "@/lib/home";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -23,13 +25,7 @@ export default function LoginPage() {
         body: JSON.stringify({ identifier, password }),
       });
       clearMe();
-      if (res.role === "super_admin") {
-        router.replace("/superadmin");
-      } else if (res.role === "onboarding_specialist") {
-        router.replace("/specialist");
-      } else {
-        router.replace("/dashboard");
-      }
+      router.replace(homePathFor(res.role));
       router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Login failed");
@@ -38,20 +34,26 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-dvh items-center justify-center bg-gradient-to-br from-indigo-700 via-indigo-600 to-slate-900 p-4">
+    <div className="relative flex min-h-dvh items-center justify-center bg-gradient-to-br from-indigo-700 via-indigo-600 to-slate-900 px-4 pb-8 pt-20 sm:p-6">
+      {/* Top-right entry point for Expert Specialists */}
+      <Link
+        href="/login/specialist"
+        className="absolute right-4 top-4 inline-flex min-h-[40px] items-center gap-1.5 rounded-full border border-white/25 bg-white/10 px-3.5 py-2 text-xs font-semibold text-white shadow-sm backdrop-blur transition hover:bg-white/20 sm:right-6 sm:top-6 sm:text-sm"
+      >
+        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+        </svg>
+        Expert Specialist Login
+      </Link>
+
       <div className="w-full max-w-md">
-        <div className="mb-6 text-center">
-          <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-white/15 text-white backdrop-blur">
-            <svg className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </div>
-          <h1 className="text-2xl font-bold text-white">TimeTrack Pro</h1>
-          <p className="text-sm text-indigo-200">Attendance, leave & salary management</p>
+        <div className="mb-6 flex flex-col items-center text-center">
+          <BrandLockup size="lg" tone="light" />
+          <p className="mt-3 text-sm text-indigo-200">Attendance, leave and salary, in one place</p>
         </div>
 
-        <Card className="p-6">
-          <h2 className="mb-4 text-lg font-bold text-slate-900">Sign in to your workspace</h2>
+        <Card className="p-5 sm:p-6">
+          <h1 className="mb-4 text-lg font-bold text-slate-900">Sign in to your workspace</h1>
           <form
             className="space-y-3"
             onSubmit={(e) => {
@@ -69,11 +71,11 @@ export default function LoginPage() {
               autoCapitalize="none"
               spellCheck={false}
             />
-            <Input label="Password" type="password" value={password} onChange={setPassword} placeholder="••••••••" />
+            <Input label="Password" type="password" value={password} onChange={setPassword} placeholder="••••••••" autoComplete="current-password" />
             <div className="-mt-1 text-right">
               <Link href="/forgot-password" className="text-xs font-semibold text-indigo-600 hover:underline">Forgot password?</Link>
             </div>
-            {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">{error}</p>}
+            {error && <p role="alert" className="rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">{error}</p>}
             <Button className="w-full" loading={loading} type="submit" disabled={!identifier.trim() || !password}>
               Sign In
             </Button>

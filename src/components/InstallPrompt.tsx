@@ -7,7 +7,7 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
 }
 
-const DISMISS_KEY = "timetrack_install_dismissed";
+const DISMISS_KEY = "dotinout_install_dismissed";
 
 export default function InstallPrompt() {
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
@@ -54,8 +54,8 @@ export default function InstallPrompt() {
           </svg>
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold">Install TimeTrack</p>
-          <p className="truncate text-[11px] text-slate-300">Punch in faster from your home screen.</p>
+          <p className="text-sm font-semibold">Install Dotinout</p>
+          <p className="truncate text-[11px] text-slate-300">Punch in and out faster from your home screen.</p>
         </div>
         <button onClick={install} className="rounded-lg bg-white px-3 py-1.5 text-xs font-bold text-slate-900">
           Install

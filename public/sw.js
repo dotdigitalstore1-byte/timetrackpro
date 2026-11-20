@@ -1,6 +1,6 @@
 // Network-first for pages (so new deployments are never hidden behind a stale cache),
 // cache-first only for immutable static assets. API calls and authenticated HTML are never cached.
-const CACHE = "timetrack-v3";
+const CACHE = "dotinout-v4";
 const STATIC = ["/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png"];
 
 self.addEventListener("install", (event) => {
@@ -52,7 +52,7 @@ self.addEventListener("fetch", (event) => {
       fetch(req).catch(
         () =>
           new Response(
-            "<!doctype html><meta name=viewport content='width=device-width'><body style='font-family:sans-serif;padding:2rem;text-align:center'><h2>You are offline</h2><p>TimeTrack needs a connection to punch in and show salary data. Please reconnect and try again.</p>",
+            "<!doctype html><meta name=viewport content='width=device-width'><body style='font-family:sans-serif;padding:2rem;text-align:center'><h2>You are offline</h2><p>Dotinout needs a connection to punch in and show salary data. Please reconnect and try again.</p>",
             { headers: { "Content-Type": "text/html; charset=utf-8" }, status: 503 }
           )
       )

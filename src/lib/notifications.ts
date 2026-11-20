@@ -15,8 +15,8 @@ export interface NotificationItem {
 }
 
 /** Dispatched on window after anything that changes the notification list (for example an agreement answer). */
-export const NOTIFICATIONS_CHANGED = "timetrack:notifications-changed";
+export const NOTIFICATIONS_CHANGED = "dotinout:notifications-changed";
 /** Dispatched on window when the admin taps the check-in notification: the check-in re-checks and opens. */
-export const OPEN_CHECKIN_EVENT = "timetrack:open-checkin";
+export const OPEN_CHECKIN_EVENT = "dotinout:open-checkin";
 /** Dispatched on window when an employee's punch is blocked, so the agreement pop-up re-checks and opens. */
-export const AGREEMENTS_CHANGED = "timetrack:agreements-changed";
+export const AGREEMENTS_CHANGED = "dotinout:agreements-changed";

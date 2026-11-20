@@ -14,6 +14,8 @@ export async function POST(req: Request) {
     // Employees sign in with their email ID or username; anything containing "@" is treated as an email.
     const identifier = String(body.identifier ?? body.email ?? "").trim().toLowerCase();
     const password = String(body.password || "");
+    // "specialist" = the dedicated Expert Specialist sign-in; only specialist accounts may use it.
+    const portal = body.portal === "specialist" ? "specialist" : "workspace";
 
     if (!identifier || !password) {
       return NextResponse.json({ error: "Email ID / username and password are required." }, { status: 400 });
@@ -31,6 +33,9 @@ export async function POST(req: Request) {
     // matching user row is created or refreshed automatically.
     const superAdmin = await authenticateEnvSuperAdmin(email, password);
     if (superAdmin) {
+      if (portal === "specialist") {
+        return NextResponse.json({ error: "This sign-in is for Expert Specialists only." }, { status: 403 });
+      }
       await clearRateLimit(emailKey);
       const token = await createSession(superAdmin.id);
       await setSessionCookie(token);
@@ -53,6 +58,10 @@ export async function POST(req: Request) {
     // Super admins are owned by the environment; a stored hash must never sign one in.
     if (user.role === "super_admin") {
       return NextResponse.json({ error: "Invalid email ID / username or password." }, { status: 401 });
+    }
+    // Checked only after the password is verified, so the account type is never revealed to anyone guessing.
+    if (portal === "specialist" && user.role !== "onboarding_specialist") {
+      return NextResponse.json({ error: "This sign-in is for Expert Specialists only. Use the main sign-in page." }, { status: 403 });
     }
 
     await clearRateLimit(emailKey);

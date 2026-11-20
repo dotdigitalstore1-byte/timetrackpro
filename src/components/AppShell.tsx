@@ -1,12 +1,14 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { api, clearMe } from "@/lib/client";
 import InstallPrompt from "@/components/InstallPrompt";
 import CompanyMark from "@/components/CompanyMark";
+import { BrandMark } from "@/components/Brand";
+import { canOpenSpecialistArea, homePathFor } from "@/lib/home";
 import NotificationBell from "@/components/NotificationBell";
 import AgreementGate from "@/components/AgreementGate";
 import AdminFeedbackGate from "@/components/AdminFeedbackGate";
@@ -74,6 +76,14 @@ export default function AppShell({
 
   const isSuperAdmin = role === "super_admin";
   const isSpecialist = role === "onboarding_specialist";
+  // Dotinout-owned workspaces (platform admin and expert specialists) show the Dotinout mark; company workspaces show their own logo.
+  const platformOwned = isSuperAdmin || isSpecialist;
+
+  // Role isolation: a specialist stays in the specialist area; nobody else can open it.
+  useEffect(() => {
+    if (isSpecialist && !canOpenSpecialistArea(pathname)) router.replace("/specialist");
+    if (!isSpecialist && pathname.startsWith("/specialist")) router.replace(homePathFor(role));
+  }, [isSpecialist, pathname, role, router]);
 
   const isAdmin = role === "company_admin";
   const isManager = role === "manager";
@@ -168,8 +178,8 @@ export default function AppShell({
       {/* Desktop sidebar */}
       <aside className="fixed inset-y-0 left-0 hidden w-60 flex-col border-r border-slate-200 bg-white lg:flex">
         <div className="flex items-center gap-2.5 border-b border-slate-100 px-5 py-5">
-          {isSuperAdmin ? (
-            defaultMarkDesktop
+          {platformOwned ? (
+            <BrandMark className="h-9 w-9 shrink-0 rounded-xl" />
           ) : (
             <CompanyMark
               version={logoVersion}
@@ -178,11 +188,9 @@ export default function AppShell({
             />
           )}
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-bold leading-tight text-slate-900">
-              {isSuperAdmin ? "TimeTrack Platform" : companyName}
-            </p>
+            <p className="truncate text-sm font-bold leading-tight text-slate-900">{platformOwned ? "Dotinout" : companyName}</p>
             <p className="text-[10px] font-medium uppercase tracking-wide text-indigo-500">
-              {isSuperAdmin ? "Platform admin" : companyPlan ? `${companyPlan} plan` : "Workspace"}
+              {isSuperAdmin ? "Platform admin" : isSpecialist ? "Expert specialist" : companyPlan ? `${companyPlan} plan` : "Workspace"}
             </p>
           </div>
           {showBell && <NotificationBell />}
@@ -203,6 +211,11 @@ export default function AppShell({
             </Link>
           ))}
         </nav>
+        {!platformOwned && (
+          <p className="px-5 pb-2 text-[10px] text-slate-400">
+            Powered by <span className="font-semibold text-slate-500">Dotinout</span>
+          </p>
+        )}
         <div className="border-t border-slate-100 p-4">
           <button
             onClick={handleLogout}
@@ -218,13 +231,13 @@ export default function AppShell({
       {/* Mobile top bar */}
       <header className="sticky top-0 z-30 flex items-center justify-between border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur lg:hidden">
         <div className="flex min-w-0 items-center gap-2.5">
-          {isSuperAdmin ? (
-            defaultMarkMobile
+          {platformOwned ? (
+            <BrandMark className="h-8 w-8 shrink-0 rounded-lg" />
           ) : (
             <CompanyMark version={logoVersion} className="h-8 w-8 shrink-0 rounded-lg object-contain" fallback={defaultMarkMobile} />
           )}
           <div className="min-w-0 leading-tight">
-            <p className="truncate text-sm font-bold text-slate-900">{isSuperAdmin ? "TimeTrack Platform" : companyName}</p>
+            <p className="truncate text-sm font-bold text-slate-900">{platformOwned ? "Dotinout" : companyName}</p>
             <p className="truncate text-[10px] font-medium text-slate-400">{userName}</p>
           </div>
         </div>
