@@ -41,3 +41,26 @@ input[type="number"]::-webkit-inner-spin-button {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Tap feedback: every button and link gives an immediate press response. */
+button:not(:disabled),
+a[href],
+[role="button"]:not([aria-disabled="true"]) {
+  transition: transform 120ms ease, background-color 150ms ease, color 150ms ease, box-shadow 150ms ease, opacity 150ms ease;
+}
+button:not(:disabled):active,
+a[href]:active,
+[role="button"]:not([aria-disabled="true"]):active {
+  transform: scale(0.96);
+  opacity: 0.88;
+}
+[aria-disabled="true"],
+button:disabled {
+  cursor: not-allowed;
+}
+
+/* Top progress bar while a page loads after a tap. */
+@keyframes dio-progress {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}

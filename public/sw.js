@@ -4,8 +4,13 @@
 //   That cache is cleared on sign-out (see clearOfflineCache), because pages contain per-user data.
 // - API responses are never cached here. Offline data is cached explicitly by the app (src/lib/offline) and
 //   offline writes are queued with idempotency keys.
-const CACHE = "dotinout-v5";
-const PAGES = "dotinout-pages-v1";
+const CACHE = "dotinout-v6";
+// v2 of the page cache: any page cached by an older build is discarded on activate.
+const PAGES = "dotinout-pages-v2";
+// Gate and entry pages are never cached. A cached copy of one of them could show the wrong screen on reopen.
+const NEVER_CACHE = ["/", "/open", "/login", "/get-app", "/app-restricted", "/unavailable", "/billing", "/register", "/forgot-password"];
+const isNeverCached = (pathname) =>
+  NEVER_CACHE.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 const KEEP = [CACHE, PAGES];
 const STATIC = ["/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png"];
 
@@ -60,7 +65,7 @@ self.addEventListener("fetch", (event) => {
       fetch(req)
         .then((res) => {
           // Only keep a plain successful page (not a redirect), so an offline visit never lands on a login loop.
-          if (res.ok && !res.redirected) {
+          if (res.ok && !res.redirected && !isNeverCached(url.pathname)) {
             const copy = res.clone();
             caches.open(PAGES).then((c) => c.put(req, copy));
           }

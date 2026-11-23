@@ -19,7 +19,11 @@ export type SignInPortal = "workspace" | "specialist";
 const DUMMY_HASH = "00".repeat(16) + ":" + "00".repeat(64);
 const GENERIC_INVALID = "Invalid email ID / username or password.";
 
+const MOBILE_EMPLOYEES_ONLY =
+  "The Dotinout mobile app is for employees only. Company admins, managers, specialists and platform owners sign in on the Dotinout website.";
+
 export async function signIn(req: Request, portal: SignInPortal): Promise<NextResponse> {
+  const native = isNativeAppUserAgent(req.headers.get("user-agent"));
   let body: Record<string, unknown>;
   try {
     body = await req.json();
@@ -47,6 +51,7 @@ export async function signIn(req: Request, portal: SignInPortal): Promise<NextRe
       // The platform owner is authenticated from SUPER_ADMIN_EMAIL / SUPER_ADMIN_PASSWORD.
       const superAdmin = await authenticateEnvSuperAdmin(identifier, password);
       if (superAdmin) {
+        if (native) return NextResponse.json({ error: MOBILE_EMPLOYEES_ONLY }, { status: 403 });
         await clearRateLimit(idKey);
         const token = await createSession(superAdmin.id);
         await setSessionCookie(token);
@@ -74,6 +79,11 @@ export async function signIn(req: Request, portal: SignInPortal): Promise<NextRe
       return NextResponse.json({ error: GENERIC_INVALID }, { status: 401 });
     }
 
+    // Checked after the password, so only someone who knows the password learns the account type.
+    if (native && user.role !== "employee") {
+      return NextResponse.json({ error: MOBILE_EMPLOYEES_ONLY }, { status: 403 });
+    }
+
     const isSpecialist = user.role === "onboarding_specialist";
     if (portal === "specialist" && !isSpecialist) {
       // Same response as a wrong password: this portal only exists for Expert Specialists.
@@ -90,7 +100,6 @@ export async function signIn(req: Request, portal: SignInPortal): Promise<NextRe
     const token = await createSession(user.id);
     await setSessionCookie(token);
     // Employees on the web are sent to the "Get the app" page; the mobile app goes straight to their home.
-    const native = isNativeAppUserAgent(req.headers.get("user-agent"));
     return NextResponse.json({ ok: true, role: user.role, home: entryPathFor({ role: user.role, locked: false, native }) });
   } catch (e) {
     console.error(`${portal} sign-in error`, e);

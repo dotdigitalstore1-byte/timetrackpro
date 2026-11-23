@@ -3,7 +3,7 @@ import { db } from "@/db";
 import { platformSettings } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
 import { loadAppLinks } from "@/lib/app-downloads";
-import { validateStoreUrl } from "@/lib/app-links-core";
+import { validateRegistrationUrl, validateStoreUrl } from "@/lib/app-links-core";
 
 async function requirePlatformOwner() {
   const ctx = await getAuth();
@@ -25,7 +25,7 @@ export async function PUT(req: Request) {
   if (auth.error) return auth.error;
   const ctx = auth.ctx!;
 
-  let body: { playStoreUrl?: unknown; appStoreUrl?: unknown };
+  let body: { playStoreUrl?: unknown; appStoreUrl?: unknown; businessRegistrationUrl?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -36,13 +36,29 @@ export async function PUT(req: Request) {
   const appStore = validateStoreUrl("appstore", body.appStoreUrl);
   if (!appStore.ok) return NextResponse.json({ error: appStore.error }, { status: 400 });
 
+  const registration = validateRegistrationUrl(body.businessRegistrationUrl);
+  if (!registration.ok) return NextResponse.json({ error: registration.error }, { status: 400 });
+
   const now = new Date();
   await db
     .insert(platformSettings)
-    .values({ id: 1, playStoreUrl: play.value, appStoreUrl: appStore.value, updatedAt: now, updatedBy: ctx.user.id })
+    .values({
+      id: 1,
+      playStoreUrl: play.value,
+      appStoreUrl: appStore.value,
+      businessRegistrationUrl: registration.value,
+      updatedAt: now,
+      updatedBy: ctx.user.id,
+    })
     .onConflictDoUpdate({
       target: platformSettings.id,
-      set: { playStoreUrl: play.value, appStoreUrl: appStore.value, updatedAt: now, updatedBy: ctx.user.id },
+      set: {
+        playStoreUrl: play.value,
+        appStoreUrl: appStore.value,
+        businessRegistrationUrl: registration.value,
+        updatedAt: now,
+        updatedBy: ctx.user.id,
+      },
     });
 
   return NextResponse.json({ ok: true, ...(await loadAppLinks()) });

@@ -792,6 +792,8 @@ export const platformSettings = pgTable("platform_settings", {
   // Store links shown on the employee "Get the app" page. Null until the Super Admin adds them.
   playStoreUrl: varchar("play_store_url", { length: 500 }),
   appStoreUrl: varchar("app_store_url", { length: 500 }),
+  // "Register your business" link on the mobile login screen. Null means the default https://dotinout.com.
+  businessRegistrationUrl: varchar("business_registration_url", { length: 500 }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
 });

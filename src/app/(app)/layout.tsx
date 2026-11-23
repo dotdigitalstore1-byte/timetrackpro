@@ -15,18 +15,10 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   if (!ctx) {
     redirect("/login");
   }
-  // Employees use the mobile app for attendance and workforce actions. On the web they see only the download page.
-  if (ctx.user.role === "employee" && !(await isNativeAppRequest())) {
-    redirect("/get-app");
-  }
-  // Admins are sent to billing as soon as the period ends. Staff keep working through the grace window and only see a
-  // neutral page at the 30-day hard cutoff (never a message about the plan).
-  if (ctx.user.role === "company_admin" && ctx.locked) {
-    redirect("/billing");
-  }
-  if (ctx.user.role !== "company_admin" && ctx.staffLocked) {
-    redirect("/unavailable");
-  }
+  // The mobile app is for employees only; employees on the web get the download page.
+  const native = await isNativeAppRequest();
+  if (native && ctx.user.role !== "employee") redirect("/app-restricted");
+  if (!native && ctx.user.role === "employee") redirect("/get-app");
 
   const access = await loadAccess(ctx);
   const logoVersion = ctx.company ? await loadLogoVersion(ctx.company.id) : null;

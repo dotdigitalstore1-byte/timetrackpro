@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { appDownloads, platformSettings } from "@/db/schema";
-import type { AppPlatform } from "@/lib/app-links-core";
+import { DEFAULT_REGISTRATION_URL, type AppPlatform } from "@/lib/app-links-core";
 
 export interface AppFileInfo {
   platform: AppPlatform;
@@ -14,10 +14,15 @@ export interface AppFileInfo {
 export async function loadAppLinks(): Promise<{
   playStoreUrl: string | null;
   appStoreUrl: string | null;
+  businessRegistrationUrl: string;
   files: { android: AppFileInfo | null; ios: AppFileInfo | null };
 }> {
   const [settings] = await db
-    .select({ playStoreUrl: platformSettings.playStoreUrl, appStoreUrl: platformSettings.appStoreUrl })
+    .select({
+      playStoreUrl: platformSettings.playStoreUrl,
+      appStoreUrl: platformSettings.appStoreUrl,
+      businessRegistrationUrl: platformSettings.businessRegistrationUrl,
+    })
     .from(platformSettings)
     .where(eq(platformSettings.id, 1))
     .limit(1);
@@ -41,5 +46,10 @@ export async function loadAppLinks(): Promise<{
       };
     }
   }
-  return { playStoreUrl: settings?.playStoreUrl ?? null, appStoreUrl: settings?.appStoreUrl ?? null, files };
+  return {
+    playStoreUrl: settings?.playStoreUrl ?? null,
+    appStoreUrl: settings?.appStoreUrl ?? null,
+    businessRegistrationUrl: settings?.businessRegistrationUrl || DEFAULT_REGISTRATION_URL,
+    files,
+  };
 }

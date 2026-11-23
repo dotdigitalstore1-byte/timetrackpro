@@ -2,6 +2,9 @@ import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
 import PwaRegister from "@/components/PwaRegister";
+import NativeSplash from "@/components/NativeSplash";
+import RouteProgress from "@/components/RouteProgress";
+import { isNativeAppRequest } from "@/lib/app-platform";
 
 export const metadata: Metadata = {
   title: "Dotinout (DIO) — Attendance & Salary Management",
@@ -25,7 +28,8 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  const native = await isNativeAppRequest();
   return (
     <html lang="en">
       <head>
@@ -34,7 +38,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       </head>
       <body className="bg-slate-100 font-sans text-slate-900 antialiased">
         <PwaRegister />
-        {children}
+        <NativeSplash native={native}>
+          <RouteProgress />
+          {children}
+        </NativeSplash>
       </body>
     </html>
   );

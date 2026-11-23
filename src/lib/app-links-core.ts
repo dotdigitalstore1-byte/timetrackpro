@@ -72,3 +72,22 @@ export function validateAppFile(
 export function safeDownloadName(fileName: string): string {
   return fileName.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 150) || "dotinout-app";
 }
+
+export const DEFAULT_REGISTRATION_URL = "https://dotinout.com";
+
+/** The "Register your business" link. Any https website is allowed, and an empty value restores the default. */
+export function validateRegistrationUrl(raw: unknown): Checked<string> {
+  if (raw === undefined || raw === null || raw === "") return { ok: true, value: DEFAULT_REGISTRATION_URL };
+  if (typeof raw !== "string") return { ok: false, error: "The registration link must be text." };
+  const value = raw.trim();
+  if (!value) return { ok: true, value: DEFAULT_REGISTRATION_URL };
+  if (value.length > 500) return { ok: false, error: "The registration link is too long." };
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return { ok: false, error: "Enter a full link that starts with https://." };
+  }
+  if (url.protocol !== "https:") return { ok: false, error: "The registration link must start with https://." };
+  return { ok: true, value: url.toString() };
+}

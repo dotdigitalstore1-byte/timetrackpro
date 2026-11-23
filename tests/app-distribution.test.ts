@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { isNativeAppUserAgent } from "../src/lib/app-platform-core.ts";
-import { validateStoreUrl, validateAppFile, safeDownloadName, MAX_APP_FILE_BYTES } from "../src/lib/app-links-core.ts";
+import { validateStoreUrl, validateAppFile, safeDownloadName, MAX_APP_FILE_BYTES, validateRegistrationUrl, DEFAULT_REGISTRATION_URL } from "../src/lib/app-links-core.ts";
 
 const ZIP = new Uint8Array([0x50, 0x4b, 0x03, 0x04]);
 const NOT_ZIP = new Uint8Array([0x3c, 0x68, 0x74, 0x6d]);
@@ -40,4 +40,11 @@ test("app files: correct extension per platform, zip container, size limit", () 
 test("download file names are cleaned", () => {
   assert.equal(safeDownloadName('my app (v2)".apk'), "my_app__v2__.apk");
   assert.equal(safeDownloadName(""), "dotinout-app");
+});
+
+test("registration link: any https website, empty restores the default", () => {
+  assert.deepEqual(validateRegistrationUrl(""), { ok: true, value: DEFAULT_REGISTRATION_URL });
+  assert.equal(validateRegistrationUrl("https://dotinout.com").ok, true);
+  assert.equal(validateRegistrationUrl("http://dotinout.com").ok, false);
+  assert.equal(validateRegistrationUrl("dotinout.com").ok, false);
 });

@@ -20,6 +20,8 @@ export function homePathFor(role: string): string {
  * billing was a routing bug: billing is an admin-only screen.
  */
 export function entryPathFor(session: { role: string; locked: boolean; native: boolean }): string {
+  // The mobile app is for employees only. Any other account is told to use the website.
+  if (session.native && session.role !== "employee") return "/app-restricted";
   if (session.role === "company_admin" && session.locked) return "/billing";
   // Employees use attendance and leave only in the mobile app. On the web they get the download page.
   if (session.role === "employee" && !session.native) return "/get-app";

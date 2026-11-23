@@ -94,7 +94,7 @@ const REQUEST_TIMEOUT_MS = 30_000;
  * JSON fetch helper with a hard timeout and typed errors.
  * Never caches responses so attendance/salary data is always fresh.
  */
-export async function api<T = unknown>(url: string, options: RequestInit = {}): Promise<T> {
+async function apiOnce<T>(url: string, options: RequestInit = {}): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -255,6 +255,27 @@ export async function withRetry<T>(attempt: () => Promise<T>, tries = 3): Promis
       const temporary = e instanceof ApiError && (e.status === 0 || e.status === 502 || e.status === 503 || e.status === 504);
       if (!temporary || i === tries - 1) throw e;
       await new Promise((r) => setTimeout(r, 800 * (i + 1) + Math.random() * 600));
+    }
+  }
+  throw last;
+}
+
+/**
+ * JSON request with automatic retries for reads (GET). A dropped connection or a slow cold start is retried
+ * quietly before the user sees "The request timed out". Writes are never retried automatically.
+ */
+export async function api<T = unknown>(url: string, options: RequestInit = {}): Promise<T> {
+  const method = (options.method || "GET").toUpperCase();
+  const attempts = method === "GET" ? 3 : 1;
+  let last: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await apiOnce<T>(url, options);
+    } catch (e) {
+      last = e;
+      const connectionProblem = e instanceof ApiError && e.status === 0;
+      if (!connectionProblem || i === attempts - 1) throw e;
+      await new Promise((r) => setTimeout(r, 700 * (i + 1)));
     }
   }
   throw last;

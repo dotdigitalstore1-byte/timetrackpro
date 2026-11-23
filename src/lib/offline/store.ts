@@ -124,7 +124,9 @@ export function clearOfflineCache(): void {
   }
   // Cached HTML pages are per-user too; drop them as well.
   if (typeof caches !== "undefined") {
-    void caches.delete("dotinout-pages-v1").catch(() => undefined);
+    for (const name of ["dotinout-pages-v1", "dotinout-pages-v2"]) {
+      void caches.delete(name).catch(() => undefined);
+    }
   }
   notify();
 }

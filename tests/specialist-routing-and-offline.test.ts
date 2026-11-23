@@ -41,3 +41,10 @@ test("idempotency keys: missing is allowed, malformed is rejected, valid is trim
     valid: true,
   });
 });
+
+test("the mobile app never routes a non-employee into the app; the web is unchanged", () => {
+  assert.equal(entryPathFor({ role: "company_admin", locked: false, native: true }), "/app-restricted");
+  assert.equal(entryPathFor({ role: "onboarding_specialist", locked: false, native: true }), "/app-restricted");
+  assert.equal(entryPathFor({ role: "super_admin", locked: false, native: true }), "/app-restricted");
+  assert.equal(entryPathFor({ role: "company_admin", locked: false, native: false }), "/dashboard");
+});

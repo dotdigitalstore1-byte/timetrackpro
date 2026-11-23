@@ -121,3 +121,52 @@ kept for controlled rollouts.
 
 **Logos:** the store badges in the download page are simplified placeholders. Replace them with the official
 "Get it on Google Play" and "Download on the App Store" artwork before launch, as their brand guidelines require.
+
+## 8. Mobile app: employees only, launch animation, session and tap feedback
+
+Run once: `psql "$DATABASE_URL" -f migrations/2027-03-links-and-registration.sql`
+
+**Mobile app scope (enforced on the server, not only in the screens)**
+- The mobile app accepts employee accounts only. Company admins, managers, Expert Specialists and the platform owner
+  get "The Dotinout mobile app is for employees only…" on every sign-in route, and any existing session is sent to
+  `/app-restricted`. Web sign-in for those roles is unchanged.
+- The mobile login is a separate screen: Username, Password, and a helper note ("Forgot your password? Contact your
+  company admin to reset it."). There is no Forgot password link and no Expert Specialist button in the app.
+  The specialist sign-in page redirects to the employee login inside the app.
+- "New company? Register your business" opens the URL set in Super Admin → Links (default https://dotinout.com).
+- Employees change their own password in Profile, as before.
+- Employees on the web still see only the download page (`/get-app`). The mobile app never routes to that page.
+
+**Launch animation (mobile only)**
+- The overlay is rendered by the server on the first paint, so the screen is not blank while the app loads.
+- Timeline: "Dotinout" appears → o, t, n, u, t fade out → D, I, O slide together and become uppercase → the overlay
+  fades into the app (about 2.8 s in total).
+
+**Session persistence and the web screen inside the app**
+- Android: `MainActivity` flushes the WebView cookie store when the app goes to the background, so the sign-in
+  cookie is written to disk before the app can be swiped away.
+- The web-only screen could appear inside the app from an offline page cache. The cache is now `dotinout-pages-v2`
+  (old caches are deleted), and the sign-in, entry, download and restricted pages are never cached.
+- **iOS is not fixed in this package.** The iOS project is not in the zip. WKWebView cookie persistence needs a native
+  change in `ios/App/App/AppDelegate.swift` (flush the cookie store on background), which must be made and tested on a device.
+  If sign-outs still happen after restarts, the next step is to keep the session token in secure device storage.
+
+**Speed and feedback**
+- Read requests (GET) are retried automatically up to two more times on a dropped connection or timeout. Writes are
+  not retried, so a punch or leave is never sent twice.
+- Every button and link has a press animation (scale and opacity).
+- A progress bar appears at the top as soon as a link is tapped.
+- Action buttons already show a spinner while they are busy.
+
+**Known gaps**
+- Real-time sync: employee actions are saved to the database immediately, and the admin dashboard shows them on
+  the next load or refresh. Instant push updates would need a real-time channel (not built).
+- Store approval: Apple guideline 4.2 (minimum functionality) and Google Play's account and data-safety rules
+  apply. Provide a privacy policy URL, the data-safety form, and review notes that explain the employee-only app.
+  The registration link opens in the device browser, and no in-app purchase exists. Opening external links is
+  handled by Capacitor's default navigation rules; add `@capacitor/browser` if testing shows otherwise.
+- Store badges are placeholders. Use the official Google Play and App Store artwork.
+
+**Not verified in this package:** no device, emulator, or store test was run. Required device checks: force-close and
+reopen (stays signed in), a non-employee sign-in in the app (blocked), the web download screen never appearing in the
+app, the launch animation, tap feedback on every button, and admin dashboard sync after punches and leave requests.

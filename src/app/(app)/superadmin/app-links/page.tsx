@@ -14,6 +14,7 @@ interface FileInfo {
 interface AppLinksData {
   playStoreUrl: string | null;
   appStoreUrl: string | null;
+  businessRegistrationUrl: string;
   files: { android: FileInfo | null; ios: FileInfo | null };
 }
 
@@ -27,6 +28,7 @@ export default function AppLinksPage() {
   const [data, setData] = useState<AppLinksData | null>(null);
   const [playUrl, setPlayUrl] = useState("");
   const [appUrl, setAppUrl] = useState("");
+  const [registrationUrl, setRegistrationUrl] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -39,6 +41,7 @@ export default function AppLinksPage() {
       setData(res);
       setPlayUrl(res.playStoreUrl ?? "");
       setAppUrl(res.appStoreUrl ?? "");
+      setRegistrationUrl(res.businessRegistrationUrl ?? "");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load app links");
     } finally {
@@ -57,12 +60,13 @@ export default function AppLinksPage() {
     try {
       const res = await api<AppLinksData & { ok: boolean }>("/api/superadmin/app-links", {
         method: "PUT",
-        body: JSON.stringify({ playStoreUrl: playUrl, appStoreUrl: appUrl }),
+        body: JSON.stringify({ playStoreUrl: playUrl, appStoreUrl: appUrl, businessRegistrationUrl: registrationUrl }),
       });
       setData(res);
       setPlayUrl(res.playStoreUrl ?? "");
       setAppUrl(res.appStoreUrl ?? "");
-      setNotice("Store links saved.");
+      setRegistrationUrl(res.businessRegistrationUrl ?? "");
+      setNotice("Links saved.");
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not save the links");
     } finally {
@@ -110,7 +114,7 @@ export default function AppLinksPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="App links & downloads" subtitle="These appear on the page employees see after they sign in on the web." />
+      <PageHeader title="Links" subtitle="These appear on the page employees see after they sign in on the web." />
       {error && <ErrorBanner message={error} />}
       {notice && <p role="status" className="rounded-lg bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700">{notice}</p>}
 
@@ -137,8 +141,17 @@ export default function AppLinksPage() {
           autoCapitalize="none"
           spellCheck={false}
         />
+        <Input
+          label="Business registration link (mobile login screen)"
+          value={registrationUrl}
+          onChange={setRegistrationUrl}
+          placeholder="https://dotinout.com"
+          autoCapitalize="none"
+          spellCheck={false}
+        />
+        <p className="text-xs text-slate-500">Leave it empty to use https://dotinout.com.</p>
         <div className="flex justify-end">
-          <Button onClick={saveLinks} loading={busy === "links"}>Save store links</Button>
+          <Button onClick={saveLinks} loading={busy === "links"}>Save links</Button>
         </div>
       </Card>
 
