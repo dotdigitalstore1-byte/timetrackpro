@@ -1,5 +1,5 @@
 import { randomBytes, scryptSync, timingSafeEqual } from "crypto";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { and, eq, gt } from "drizzle-orm";
 import { db } from "@/db";
 import {
@@ -13,6 +13,7 @@ import type { Company, CompanySettings, Employee, User } from "@/db/schema";
 import { matchesSuperAdminCredentials, readSuperAdminEnv } from "@/lib/super-admin";
 import { accessInfo } from "@/lib/billing-core";
 import { loadGracePolicy } from "@/lib/grace-policy";
+import { parseBearerToken } from "@/lib/app-platform-core";
 
 const SESSION_COOKIE = "att_session";
 // Mobile users stay signed in. 400 days is the longest cookie lifetime browsers accept; sign-out and password
@@ -96,6 +97,8 @@ export interface AuthContext {
   employee: Employee | null;
   /** The raw session token. Used to sign short-lived punch challenges (see capture-token.ts). Never sent to clients. */
   sessionToken: string;
+  /** True when the session came from an Authorization bearer token (the Flutter app), not the web cookie. */
+  viaBearer: boolean;
   /** The company admin is locked out (trial or paid period ended). Only the billing pages may be used then. */
   locked: boolean;
   /** Employees and managers are locked out (trial ended, or the 30-day hard cutoff). */
@@ -129,10 +132,23 @@ export async function getAuth(): Promise<AuthContext | null> {
  * Previously this took three sequential round trips per request, which multiplied latency and database
  * connection use during the morning punch-in spike.
  */
-async function resolveAuth(): Promise<AuthContext | null> {
+/**
+ * The session token for this request: an Authorization bearer token when present (mobile app), otherwise the web
+ * cookie. Browsers never send bearer headers on their own, so bearer requests are not affected by CSRF.
+ */
+export async function sessionTokenFromRequest(): Promise<{ token: string; viaBearer: boolean } | null> {
+  const h = await headers();
+  const bearer = parseBearerToken(h.get("authorization"));
+  if (bearer) return { token: bearer, viaBearer: true };
   const cookieStore = await cookies();
   const token = cookieStore.get(SESSION_COOKIE)?.value;
-  if (!token) return null;
+  return token ? { token, viaBearer: false } : null;
+}
+
+async function resolveAuth(): Promise<AuthContext | null> {
+  const session = await sessionTokenFromRequest();
+  if (!session) return null;
+  const { token, viaBearer } = session;
 
   const rows = await db
     .select({
@@ -163,7 +179,7 @@ async function resolveAuth(): Promise<AuthContext | null> {
   }
 
   if (!user.companyId) {
-    return { user, company: null, settings: null, employee: null, sessionToken: token, locked: false, staffLocked: false, restricted: false };
+    return { user, company: null, settings: null, employee: null, sessionToken: token, viaBearer, locked: false, staffLocked: false, restricted: false };
   }
 
   if (company && company.status !== "active" && user.role !== "super_admin") {
@@ -176,6 +192,7 @@ async function resolveAuth(): Promise<AuthContext | null> {
     settings: settings ?? null,
     employee: user.role === "employee" ? employee ?? null : null,
     sessionToken: token,
+    viaBearer,
     locked: info?.locked ?? false,
     staffLocked: info?.staffLocked ?? false,
     restricted: user.role === "employee" && (info?.restricted ?? false),

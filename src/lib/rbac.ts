@@ -19,6 +19,8 @@ export function requireRoles(ctx: AuthContext, roles: readonly string[]): NextRe
  */
 export function requireEmployeeApp(ctx: AuthContext, req: Request): NextResponse | null {
   if (ctx.user.role !== "employee") return null;
+  // Bearer tokens are issued only by the mobile sign-in, which accepts employees only.
+  if (ctx.viaBearer) return null;
   if (isNativeRequestHeaders(req.headers.get("user-agent"), req.headers.get("cookie"))) return null;
   return NextResponse.json(
     { error: "This is only available in the Dotinout mobile app. Download it from the app page." },

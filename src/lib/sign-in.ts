@@ -22,8 +22,15 @@ const GENERIC_INVALID = "Invalid email ID / username or password.";
 const MOBILE_EMPLOYEES_ONLY =
   "The Dotinout mobile app is for employees only. Company admins, managers, specialists and platform owners sign in on the Dotinout website.";
 
-export async function signIn(req: Request, portal: SignInPortal): Promise<NextResponse> {
-  const native = isNativeRequestHeaders(req.headers.get("user-agent"), req.headers.get("cookie"));
+/**
+ * "cookie": the web sign-in sets the session cookie (unchanged behaviour).
+ * "token": the Flutter app's sign-in. Always treated as the mobile app (employees only) and returns the session token
+ * in the body instead of a cookie. The app keeps it in secure device storage and sends it as a Bearer header.
+ */
+export type SignInDelivery = "cookie" | "token";
+
+export async function signIn(req: Request, portal: SignInPortal, delivery: SignInDelivery = "cookie"): Promise<NextResponse> {
+  const native = delivery === "token" || isNativeRequestHeaders(req.headers.get("user-agent"), req.headers.get("cookie"));
   let body: Record<string, unknown>;
   try {
     body = await req.json();
@@ -50,7 +57,7 @@ export async function signIn(req: Request, portal: SignInPortal): Promise<NextRe
     if (portal === "workspace") {
       // The platform owner is authenticated from SUPER_ADMIN_EMAIL / SUPER_ADMIN_PASSWORD.
       const superAdmin = await authenticateEnvSuperAdmin(identifier, password);
-      if (superAdmin) {
+      if (superAdmin && delivery === "cookie") {
         if (native) return NextResponse.json({ error: MOBILE_EMPLOYEES_ONLY }, { status: 403 });
         await clearRateLimit(idKey);
         const token = await createSession(superAdmin.id);
@@ -98,6 +105,14 @@ export async function signIn(req: Request, portal: SignInPortal): Promise<NextRe
 
     await clearRateLimit(idKey);
     const token = await createSession(user.id);
+    if (delivery === "token") {
+      return NextResponse.json({
+        ok: true,
+        token,
+        role: user.role,
+        home: entryPathFor({ role: user.role, locked: false, native: true }),
+      });
+    }
     await setSessionCookie(token);
     // Employees on the web are sent to the "Get the app" page; the mobile app goes straight to their home.
     return NextResponse.json({ ok: true, role: user.role, home: entryPathFor({ role: user.role, locked: false, native }) });

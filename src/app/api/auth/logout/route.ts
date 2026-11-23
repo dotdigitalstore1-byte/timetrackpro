@@ -1,13 +1,12 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { destroySession, clearSessionCookie } from "@/lib/auth";
+import { destroySession, clearSessionCookie, sessionTokenFromRequest } from "@/lib/auth";
 
 export async function POST() {
   try {
-    const cookieStore = await cookies();
-    const token = cookieStore.get("att_session")?.value;
-    if (token) {
-      await destroySession(token);
+    // Works for both the web cookie and the mobile app's bearer token.
+    const session = await sessionTokenFromRequest();
+    if (session) {
+      await destroySession(session.token);
     }
     await clearSessionCookie();
     return NextResponse.json({ ok: true });

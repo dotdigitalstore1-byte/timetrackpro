@@ -32,6 +32,16 @@ export function readCookie(cookieHeader: string | null | undefined, name: string
   return undefined;
 }
 
+/**
+ * Reads a session token from an Authorization header of the form "Bearer <token>". Session tokens are 32 random bytes
+ * written as 64 hex characters (see createSession), so anything else is rejected before it reaches the database.
+ */
+export function parseBearerToken(authorization: string | null | undefined): string | null {
+  if (!authorization) return null;
+  const m = /^Bearer\s+([a-f0-9]{64})$/i.exec(authorization.trim());
+  return m ? m[1].toLowerCase() : null;
+}
+
 /** Native if either signal is present. Used by route handlers and sign-in. */
 export function isNativeRequestHeaders(userAgent: string | null | undefined, cookieHeader: string | null | undefined): boolean {
   return isNativeAppUserAgent(userAgent) || readCookie(cookieHeader, NATIVE_APP_COOKIE) === "1";
