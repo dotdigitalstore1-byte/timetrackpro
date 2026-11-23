@@ -20,12 +20,12 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
     try {
-      const res = await api<{ role: string }>("/api/auth/login", {
+      const res = await api<{ role: string; home?: string }>("/api/auth/login", {
         method: "POST",
         body: JSON.stringify({ identifier, password }),
       });
       clearMe();
-      router.replace(homePathFor(res.role));
+      router.replace(res.home || homePathFor(res.role));
       router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Login failed");

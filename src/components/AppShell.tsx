@@ -98,6 +98,7 @@ export default function AppShell({
         { href: "/superadmin/plans", label: "Plans", icon: icons.rules },
         { href: "/superadmin/analytics", label: "Analytics", icon: icons.analytics },
         { href: "/superadmin/payments", label: "Payments", icon: icons.payments },
+        { href: "/superadmin/app-links", label: "App links", icon: icons.agreements },
         { href: "/superadmin/onboarding", label: "Onboarding", icon: icons.onboarding },
       ]
     : isSpecialist

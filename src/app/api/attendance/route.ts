@@ -3,6 +3,7 @@ import { and, desc, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { attendance, auditLogs, employeeLocations, employees, geofences, leaveRequests, users } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
+import { requireEmployeeApp } from "@/lib/rbac";
 import { toClientRecord, toListRecord, validPhoto } from "@/lib/attendance-shape";
 import { calendarDays } from "@/lib/attendance-days";
 import { cycleCounts, EMPTY_CYCLE_COUNTS, sumCycleCounts, type CycleCounts } from "@/lib/attendance-stats";
@@ -53,6 +54,8 @@ function parseMonth(value: string | null, tz: string, startDay: number): { year:
 export async function GET(req: Request) {
   const ctx = await getAuth();
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const webBlock = requireEmployeeApp(ctx, req);
+  if (webBlock) return webBlock;
   if (ctx.user.role === "super_admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const settings = ctx.settings;
   if (!settings) return NextResponse.json({ error: "Company settings not configured" }, { status: 400 });
@@ -232,6 +235,8 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const ctx = await getAuth();
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const webBlock = requireEmployeeApp(ctx, req);
+  if (webBlock) return webBlock;
   if (ctx.user.role === "super_admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   if (ctx.user.role !== "employee") {
     return NextResponse.json({ error: "Only employees punch attendance. Admins and managers supervise from the dashboard." }, { status: 403 });

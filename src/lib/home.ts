@@ -15,12 +15,14 @@ export function homePathFor(role: string): string {
 }
 
 /**
- * Where a signed-in session should land. Only company admins are sent to billing when their company is locked;
+ * Where a signed-in session should land (native = the request comes from the Dotinout mobile app). Only company admins are sent to billing when their company is locked;
  * staff are handled by the app layout (neutral "unavailable" page at the hard cutoff). Sending a locked employee to
  * billing was a routing bug: billing is an admin-only screen.
  */
-export function entryPathFor(session: { role: string; locked: boolean }): string {
+export function entryPathFor(session: { role: string; locked: boolean; native: boolean }): string {
   if (session.role === "company_admin" && session.locked) return "/billing";
+  // Employees use attendance and leave only in the mobile app. On the web they get the download page.
+  if (session.role === "employee" && !session.native) return "/get-app";
   return homePathFor(session.role);
 }
 

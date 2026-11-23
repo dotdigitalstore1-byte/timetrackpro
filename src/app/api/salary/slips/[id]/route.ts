@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { employees, salarySlipRequests, users } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
+import { requireEmployeeApp } from "@/lib/rbac";
 import { computeMonth } from "@/lib/salary";
 import { breakdownOf } from "@/lib/salary-breakdown";
 import { dateKey } from "@/lib/payroll";
@@ -13,9 +14,11 @@ import type { SlipSnapshot } from "@/lib/slip-snapshot";
  * The payslip for an approved request. Employees may read their own slip only while it is within its
  * 90-day access window; admins can always read it. Figures are the frozen, finalized ones.
  */
-export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await getAuth();
   if (!ctx || !ctx.company) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const webBlock = requireEmployeeApp(ctx, req);
+  if (webBlock) return webBlock;
   const { id } = await params;
   if (!/^[0-9a-f-]{36}$/i.test(id)) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const companyId = ctx.company.id;

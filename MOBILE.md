@@ -47,3 +47,9 @@ The Android project is already in `android/`. For iOS, on a Mac with Xcode: `npx
 
 - Run the web app: `npm run dev`. To test on an Android emulator, set
   `CAPACITOR_SERVER_URL=http://10.0.2.2:3000` (the emulator's view of your computer). Plain http is only allowed for that value.
+
+## Web vs app access
+
+- Employees who sign in on the web see only the "Get the app" page. Attendance and leave are used in the mobile app.
+- The app identifies itself with the user-agent token `DotinoutNative/1`, set in `capacitor.config.ts`. Do not remove it.
+- The token is a policy gate, not a hard security boundary (see HANDOVER-CHANGES.md, section 7).

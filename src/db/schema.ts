@@ -1,5 +1,6 @@
 import {
   boolean,
+  customType,
   index,
   integer,
   jsonb,
@@ -788,6 +789,9 @@ export const platformSettings = pgTable("platform_settings", {
   graceBlurAfterDays: integer("grace_blur_after_days").notNull().default(5),
   gracePunchUntilDays: integer("grace_punch_until_days").notNull().default(20),
   graceBlockAfterDays: integer("grace_block_after_days").notNull().default(30),
+  // Store links shown on the employee "Get the app" page. Null until the Super Admin adds them.
+  playStoreUrl: varchar("play_store_url", { length: 500 }),
+  appStoreUrl: varchar("app_store_url", { length: 500 }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
 });
@@ -911,4 +915,21 @@ export const idempotencyKeys = pgTable(
   },
   (t) => [uniqueIndex("idempotency_user_key_uq").on(t.userId, t.key)]
 );
+
+// Binary column (PostgreSQL bytea). Used only for the uploaded app packages.
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => "bytea" });
+
+/**
+ * Direct-download app packages uploaded by the Super Admin: one row per platform ("android" = .apk, "ios" = .ipa).
+ * A platform with no row has no direct download button.
+ */
+export const appDownloads = pgTable("app_downloads", {
+  platform: varchar("platform", { length: 10 }).primaryKey(),
+  fileName: varchar("file_name", { length: 200 }).notNull(),
+  contentType: varchar("content_type", { length: 100 }).notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  data: bytea("data").notNull(),
+  uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
+  uploadedBy: uuid("uploaded_by").references(() => users.id, { onDelete: "set null" }),
+});
 

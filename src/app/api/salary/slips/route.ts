@@ -3,6 +3,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLogs, employees, salaryRecords, salarySlipRequests, users } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
+import { requireEmployeeApp } from "@/lib/rbac";
 import { restrictedResponse } from "@/lib/restriction";
 import { addDays, currentCycleKey, dateKey, localWorkDate, SLIP_ACCESS_DAYS } from "@/lib/payroll";
 import { computeMonth } from "@/lib/salary";
@@ -24,6 +25,8 @@ function availability(status: string, availableUntil: Date | null, now: Date) {
 export async function GET(req: Request) {
   const ctx = await getAuth();
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const webBlock = requireEmployeeApp(ctx, req);
+  if (webBlock) return webBlock;
   if (ctx.user.role === "super_admin" || !ctx.company) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   if (ctx.restricted) return restrictedResponse();
   const companyId = ctx.company.id;
@@ -91,6 +94,8 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const ctx = await getAuth();
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const webBlock = requireEmployeeApp(ctx, req);
+  if (webBlock) return webBlock;
   if (!ctx.company) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const companyId = ctx.company.id;
   const now = new Date();

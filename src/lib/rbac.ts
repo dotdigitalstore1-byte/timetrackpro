@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isNativeAppUserAgent } from "@/lib/app-platform-core";
 import type { AuthContext } from "@/lib/auth";
 
 /**
@@ -10,4 +11,17 @@ export function requireRoles(ctx: AuthContext, roles: readonly string[]): NextRe
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   return null;
+}
+
+/**
+ * Employee self-service actions (punch, leave, salary, notices) are allowed only from the mobile app.
+ * Call after getAuth(). Admins, managers and the platform owner are not affected.
+ */
+export function requireEmployeeApp(ctx: AuthContext, req: Request): NextResponse | null {
+  if (ctx.user.role !== "employee") return null;
+  if (isNativeAppUserAgent(req.headers.get("user-agent"))) return null;
+  return NextResponse.json(
+    { error: "This is only available in the Dotinout mobile app. Download it from the app page." },
+    { status: 403 }
+  );
 }

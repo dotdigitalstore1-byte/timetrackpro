@@ -1,0 +1,223 @@
+name: iOS build
+
+# Builds an unsigned simulator app (.app) on every push to main, which is downloadable and runs in the iOS Simulator.
+# A signed App Store / TestFlight / Ad Hoc archive (.ipa) is built only when started manually with
+# "build_signed_ipa" ticked and the iOS signing secrets are added. See .github/SECRETS.md.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      build_signed_ipa:
+        description: "Also build a signed .ipa. Needs the IOS_* secrets."
+        type: boolean
+        default: false
+      export_method:
+        description: "Signed export method"
+        type: choice
+        options: [app-store-connect, ad-hoc, development]
+        default: app-store-connect
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IOS_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID || 'com.dotinout.app' }}
+
+jobs:
+  simulator-app:
+    name: Simulator app (.app)
+    runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      CAPACITOR_SERVER_URL: ${{ vars.CAPACITOR_SERVER_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Check server URL
+        run: |
+          if [ -z "$CAPACITOR_SERVER_URL" ]; then
+            echo "::error::Repository variable CAPACITOR_SERVER_URL is not set (for example https://app.yourdomain.com)."
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Verify mobile web shell
+        run: test -f mobile-www/index.html
+
+      - name: Create iOS project if it is not in the repository
+        # Commit your configured ios/ folder to keep your Xcode signing and capabilities. This step only runs if it is missing.
+        run: |
+          if [ ! -d ios ]; then npx cap add ios; fi
+
+      - name: Sync Capacitor iOS project (installs CocoaPods)
+        run: npx cap sync ios
+
+      - name: Add required camera and location permission text
+        # Punch-in needs the camera and location. iOS crashes on first use without these strings.
+        run: |
+          PLIST=ios/App/App/Info.plist
+          set_key() {
+            /usr/libexec/PlistBuddy -c "Delete :$1" "$PLIST" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :$1 string $2" "$PLIST"
+          }
+          set_key NSCameraUsageDescription "Dotinout uses the camera to take a photo when you punch in and out."
+          set_key NSLocationWhenInUseUsageDescription "Dotinout checks that you are at your work location when you punch in and out."
+
+      - name: Build simulator app
+        run: |
+          xcodebuild \
+            -workspace ios/App/App.xcworkspace \
+            -scheme App \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Package .app
+        run: |
+          APP=$(find build/DerivedData/Build/Products/Debug-iphonesimulator -maxdepth 1 -name "*.app" -type d | head -n 1)
+          test -n "$APP"
+          mkdir -p artifacts
+          (cd "$(dirname "$APP")" && zip -qr "$GITHUB_WORKSPACE/artifacts/dotinout-ios-simulator.zip" "$(basename "$APP")")
+
+      - name: Upload simulator app
+        uses: actions/upload-artifact@v4
+        with:
+          name: dotinout-ios-simulator-run-${{ github.run_number }}
+          path: artifacts/dotinout-ios-simulator.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  signed-ipa:
+    name: Signed archive (.ipa)
+    if: github.event_name == 'workflow_dispatch' && inputs.build_signed_ipa
+    runs-on: macos-latest
+    timeout-minutes: 90
+    env:
+      CAPACITOR_SERVER_URL: ${{ vars.CAPACITOR_SERVER_URL }}
+      IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+      IOS_CERT_P12_BASE64: ${{ secrets.IOS_CERT_P12_BASE64 }}
+      IOS_CERT_PASSWORD: ${{ secrets.IOS_CERT_PASSWORD }}
+      IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+      IOS_KEYCHAIN_PASSWORD: ${{ secrets.IOS_KEYCHAIN_PASSWORD }}
+      IOS_SIGN_IDENTITY: ${{ vars.IOS_SIGN_IDENTITY || 'Apple Distribution' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Check secrets and server URL
+        run: |
+          for v in CAPACITOR_SERVER_URL IOS_TEAM_ID IOS_CERT_P12_BASE64 IOS_CERT_PASSWORD IOS_PROVISIONING_PROFILE_BASE64 IOS_KEYCHAIN_PASSWORD; do
+            if [ -z "${!v}" ]; then echo "::error::$v is not set. See .github/SECRETS.md."; exit 1; fi
+          done
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Create iOS project if it is not in the repository
+        run: |
+          if [ ! -d ios ]; then npx cap add ios; fi
+
+      - name: Sync Capacitor iOS project
+        run: npx cap sync ios
+
+      - name: Install signing certificate and provisioning profile
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          PROFILE="$RUNNER_TEMP/profile.mobileprovision"
+          echo "$IOS_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$PROFILE"
+
+          security create-keychain -p "$IOS_KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$IOS_KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -P "$IOS_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$IOS_KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+
+          PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$PROFILES_DIR"
+          UUID=$(security cms -D -i "$PROFILE" | plutil -extract UUID raw -)
+          NAME=$(security cms -D -i "$PROFILE" | plutil -extract Name raw -)
+          cp "$PROFILE" "$PROFILES_DIR/$UUID.mobileprovision"
+          echo "IOS_PROFILE_NAME=$NAME" >> "$GITHUB_ENV"
+
+      - name: Add required camera and location permission text
+        run: |
+          PLIST=ios/App/App/Info.plist
+          set_key() {
+            /usr/libexec/PlistBuddy -c "Delete :$1" "$PLIST" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :$1 string $2" "$PLIST"
+          }
+          set_key NSCameraUsageDescription "Dotinout uses the camera to take a photo when you punch in and out."
+          set_key NSLocationWhenInUseUsageDescription "Dotinout checks that you are at your work location when you punch in and out."
+
+      - name: Archive
+        run: |
+          xcodebuild \
+            -workspace ios/App/App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath build/App.xcarchive \
+            -allowProvisioningUpdates \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="$IOS_TEAM_ID" \
+            CODE_SIGN_IDENTITY="$IOS_SIGN_IDENTITY" \
+            PROVISIONING_PROFILE_SPECIFIER="$IOS_PROFILE_NAME" \
+            archive
+
+      - name: Export .ipa
+        run: |
+          cat > build/ExportOptions.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>${{ inputs.export_method }}</string>
+            <key>teamID</key><string>${IOS_TEAM_ID}</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>signingCertificate</key><string>${IOS_SIGN_IDENTITY}</string>
+            <key>provisioningProfiles</key>
+            <dict><key>${IOS_BUNDLE_ID}</key><string>${IOS_PROFILE_NAME}</string></dict>
+          </dict>
+          </plist>
+          PLIST
+          xcodebuild -exportArchive \
+            -archivePath build/App.xcarchive \
+            -exportPath build/export \
+            -exportOptionsPlist build/ExportOptions.plist \
+            -allowProvisioningUpdates
+
+      - name: Upload .ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: dotinout-ios-${{ inputs.export_method }}-run-${{ github.run_number }}
+          path: build/export/*.ipa
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Remove signing material
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/build.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/profile.mobileprovision"

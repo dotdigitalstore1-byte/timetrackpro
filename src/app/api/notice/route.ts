@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { auditLogs, employees, noticePeriods, users } from "@/db/schema";
 import type { NoticePeriod } from "@/db/schema";
 import { getAuth, type AuthContext } from "@/lib/auth";
+import { requireEmployeeApp } from "@/lib/rbac";
 import { dateKey, localWorkDate } from "@/lib/payroll";
 import {
   isDayKey,
@@ -93,9 +94,11 @@ const isOpen = (status: string) => (OPEN_NOTICE_STATUSES as string[]).includes(s
  * Employee: their notice (current and past). Admin: pending requests, active notices, history and the staff list
  * for placing someone on notice directly.
  */
-export async function GET() {
+export async function GET(req: Request) {
   const ctx = await getAuth();
   if (!ctx || !ctx.company) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const webBlock = requireEmployeeApp(ctx, req);
+  if (webBlock) return webBlock;
   const companyId = ctx.company.id;
   const tz = ctx.settings?.timezone || "UTC";
   const todayKey = dateKey(localWorkDate(new Date(), tz));
@@ -156,6 +159,8 @@ export async function GET() {
 export async function POST(req: Request) {
   const ctx = await getAuth();
   if (!ctx || !ctx.company) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const webBlock = requireEmployeeApp(ctx, req);
+  if (webBlock) return webBlock;
   const companyId = ctx.company.id;
   const tz = ctx.settings?.timezone || "UTC";
   const now = new Date();

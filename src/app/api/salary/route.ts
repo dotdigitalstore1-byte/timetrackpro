@@ -3,6 +3,7 @@ import { and, desc, eq, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLogs, employees, salaryRecords, users } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
+import { requireEmployeeApp } from "@/lib/rbac";
 import { restrictedResponse } from "@/lib/restriction";
 import { can, canSeeEmployee, loadAccess } from "@/lib/access";
 import { currentCycleKey, cyclePeriod, dateKey, localWorkDate, recentCycles } from "@/lib/payroll";
@@ -21,6 +22,8 @@ function parseMonth(value: string | null | undefined, tz: string, cycleStartDay:
 export async function GET(req: Request) {
   const ctx = await getAuth();
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const webBlock = requireEmployeeApp(ctx, req);
+  if (webBlock) return webBlock;
   if (ctx.user.role === "super_admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   if (ctx.restricted) return restrictedResponse();
   const companyId = ctx.company!.id;
@@ -121,6 +124,8 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const ctx = await getAuth();
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const webBlock = requireEmployeeApp(ctx, req);
+  if (webBlock) return webBlock;
   if (ctx.user.role !== "company_admin") return NextResponse.json({ error: "Only company admins can run payroll." }, { status: 403 });
   const companyId = ctx.company!.id;
   const tz = ctx.settings?.timezone ?? "UTC";

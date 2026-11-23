@@ -33,10 +33,13 @@ const config: CapacitorConfig = {
   android: {
     // Keep the Android WebView from being debugged in production builds.
     webContentsDebuggingEnabled: false,
+    // The server uses this token to allow employee attendance and leave only inside the mobile app.
+    appendUserAgent: 'DotinoutNative/1',
   },
   ios: {
     contentInset: 'automatic',
     scrollEnabled: true,
+    appendUserAgent: 'DotinoutNative/1',
   },
 };
 

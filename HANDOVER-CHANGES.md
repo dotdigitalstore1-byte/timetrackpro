@@ -82,3 +82,42 @@
 - All 213 TypeScript and TSX files parse without syntax errors. `sw.js` and `package.json` are valid.
 - **Not run:** `npm run build`, a full `tsc` typecheck, `npx cap sync` and any device test. This environment has no
   network access and no installed `node_modules`, so these must be run on your machine. Please run the steps in section 0.
+
+## 7. Employee web/app split, Super Admin app links (latest update)
+
+Run once: `psql "$DATABASE_URL" -f migrations/2027-02-app-downloads.sql`
+
+**Employees on the web**
+- Signing in on the web takes an employee to `/get-app`, the download page. The dashboard, attendance and every
+  other (app) screen redirect there.
+- Employee self-service API routes return 403 to web requests: attendance (read and punch), punch challenge,
+  leaves, salary (read, overview, slip requests and downloads), notices, and agreement acceptance.
+  Admins, managers and the platform owner are not affected.
+- The download page shows Google Play and App Store buttons (visible even without a link, marked "Link not added
+  yet") and a direct download button per platform only when that platform has an uploaded file.
+
+**How the app is recognised**
+- Capacitor appends `DotinoutNative/1` to the app's user agent (`appendUserAgent` in `capacitor.config.ts`).
+  Login, the landing page and every employee route use this token.
+- Mobile employees go straight to their home page after login.
+- **Limitation:** the token is visible to anyone, so a determined user could copy it in a browser. The web block stops
+  normal use of the web app, but it is not a hard security boundary. Punch-ins still require a session-bound challenge,
+  a live photo and a fresh GPS fix. Stopping browser-copied tokens completely requires Google Play Integrity and Apple
+  App Attest; that is the next step if you need it.
+
+**Super Admin → App links** (sidebar item "App links")
+- Save the Play Store and App Store links. Each must use the store's own domain (`play.google.com`,
+  `apps.apple.com`, `itunes.apple.com` or `testflight.apple.com`) and start with https.
+- Upload the Android package (`.apk`) and the iOS package (`.ipa`), up to 150 MB each. Each file is checked for the
+  right extension and a valid package header. Uploading again replaces the file; Remove hides the button.
+- Files are stored in the database (`app_downloads` table) and served only to signed-in users.
+  **Hosting limit:** on Vercel, request bodies are capped at about 4.5 MB, so large APK/IPA uploads will fail there.
+  Use a self-hosted deployment (Coolify etc.) for uploads, or move the files to object storage (for example Vercel Blob)
+  before going live. Also check your database storage plan, since each package is stored in full.
+
+**iOS direct install:** an `.ipa` only installs on devices enrolled in your Apple developer account (Ad Hoc or
+enterprise distribution). For general employees, use the App Store or TestFlight link. The Super Admin upload is
+kept for controlled rollouts.
+
+**Logos:** the store badges in the download page are simplified placeholders. Replace them with the official
+"Get it on Google Play" and "Download on the App Store" artwork before launch, as their brand guidelines require.

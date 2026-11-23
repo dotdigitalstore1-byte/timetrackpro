@@ -3,6 +3,7 @@ import { and, desc, eq, gte, inArray, lt, lte } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLogs, employees, leaveRequests, users } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
+import { requireEmployeeApp } from "@/lib/rbac";
 import { findStoredResponse, readIdempotencyKey, storeResponse } from "@/lib/idempotency";
 import { restrictedResponse } from "@/lib/restriction";
 import { loadAccess, visibleEmployeeIds } from "@/lib/access";
@@ -13,9 +14,11 @@ const LEAVE_TYPES = ["casual", "medical"] as const;
 
 const MAX_RANGE_DAYS = 60;
 
-export async function GET() {
+export async function GET(req: Request) {
   const ctx = await getAuth();
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const webBlock = requireEmployeeApp(ctx, req);
+  if (webBlock) return webBlock;
   if (ctx.user.role === "super_admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   if (ctx.restricted) return restrictedResponse();
   const companyId = ctx.company!.id;
@@ -100,6 +103,8 @@ export async function GET() {
 export async function POST(req: Request) {
   const ctx = await getAuth();
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const webBlock = requireEmployeeApp(ctx, req);
+  if (webBlock) return webBlock;
   if (!ctx.employee || !ctx.settings || ctx.user.role === "super_admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }

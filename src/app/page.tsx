@@ -4,6 +4,8 @@ import { getAuthAllowLocked } from "@/lib/auth";
 import { loadPricing, serializeCycle, serializePlan } from "@/lib/billing";
 import { TRIAL_DAYS } from "@/lib/billing-core";
 import { entryPathFor } from "@/lib/home";
+import { isNativeAppRequest } from "@/lib/app-platform";
+import { redirect } from "next/navigation";
 import PlanPicker from "@/components/PlanPicker";
 import { BrandMark } from "@/components/Brand";
 
@@ -85,7 +87,9 @@ function Logo() {
 
 export default async function LandingPage() {
   const [ctx, pricing] = await Promise.all([getAuthAllowLocked(), loadPricing()]);
-  const dashboardHref = ctx ? entryPathFor({ role: ctx.user.role, locked: ctx.locked }) : "/dashboard";
+  const native = await isNativeAppRequest();
+  if (native) redirect(ctx ? entryPathFor({ role: ctx.user.role, locked: ctx.locked, native }) : "/login");
+  const dashboardHref = ctx ? entryPathFor({ role: ctx.user.role, locked: ctx.locked, native: false }) : "/dashboard";
 
   return (
     <div className="min-h-dvh bg-white text-slate-900">

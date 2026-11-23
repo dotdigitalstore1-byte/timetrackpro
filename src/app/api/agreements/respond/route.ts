@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { agreementAcknowledgements, auditLogs, companyAgreements } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
+import { requireEmployeeApp } from "@/lib/rbac";
 import { loadPublishedAgreements, statusOf, todayKeyOf } from "@/lib/agreement-gate";
 import { localWorkDate } from "@/lib/payroll";
 
@@ -14,6 +15,8 @@ import { localWorkDate } from "@/lib/payroll";
 export async function POST(req: Request) {
   const ctx = await getAuth();
   if (!ctx || !ctx.company) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const webBlock = requireEmployeeApp(ctx, req);
+  if (webBlock) return webBlock;
   if (ctx.user.role !== "employee" || !ctx.employee) {
     return NextResponse.json({ error: "Only employees respond to company agreements." }, { status: 403 });
   }

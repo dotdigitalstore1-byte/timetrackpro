@@ -3,6 +3,7 @@ import { inArray, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { employees, users } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
+import { requireEmployeeApp } from "@/lib/rbac";
 import { restrictedResponse } from "@/lib/restriction";
 import { loadAccess } from "@/lib/access";
 import { CURRENCY as CURRENCY_CODE } from "@/lib/utils";
@@ -18,6 +19,8 @@ import { dateKey, recentCycles, localWorkDate } from "@/lib/payroll";
 export async function GET(req: Request) {
   const ctx = await getAuth();
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const webBlock = requireEmployeeApp(ctx, req);
+  if (webBlock) return webBlock;
   const access = await loadAccess(ctx);
   if (ctx.restricted) return restrictedResponse();
   if (!access.isAdmin) return NextResponse.json({ error: "Only company admins can view company salary totals." }, { status: 403 });

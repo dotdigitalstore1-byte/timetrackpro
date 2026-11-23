@@ -11,11 +11,18 @@ test("each role lands on its own home page", () => {
 });
 
 test("only a locked company admin is sent to billing; locked staff are not", () => {
-  assert.equal(entryPathFor({ role: "company_admin", locked: true }), "/billing");
-  assert.equal(entryPathFor({ role: "company_admin", locked: false }), "/dashboard");
+  assert.equal(entryPathFor({ role: "company_admin", locked: true, native: false }), "/billing");
+  assert.equal(entryPathFor({ role: "company_admin", locked: false, native: false }), "/dashboard");
   // Billing is an admin-only screen: a locked employee must never be routed there.
-  assert.equal(entryPathFor({ role: "employee", locked: true }), "/dashboard");
-  assert.equal(entryPathFor({ role: "onboarding_specialist", locked: true }), "/specialist");
+  assert.equal(entryPathFor({ role: "employee", locked: true, native: true }), "/dashboard");
+  assert.equal(entryPathFor({ role: "onboarding_specialist", locked: true, native: false }), "/specialist");
+});
+
+test("employees on the web go to the download page; in the mobile app they go home", () => {
+  assert.equal(entryPathFor({ role: "employee", locked: false, native: false }), "/get-app");
+  assert.equal(entryPathFor({ role: "employee", locked: false, native: true }), "/dashboard");
+  // Admins and managers on the web are not affected by the employee app rule.
+  assert.equal(entryPathFor({ role: "manager", locked: false, native: false }), "/dashboard");
 });
 
 test("specialists cannot open attendance screens", () => {

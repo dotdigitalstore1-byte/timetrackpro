@@ -4,7 +4,8 @@ import { db } from "@/db";
 import { users } from "@/db/schema";
 import { authenticateEnvSuperAdmin, createSession, setSessionCookie, verifyPassword } from "@/lib/auth";
 import { clearRateLimit, clientIp, isRateLimited } from "@/lib/rate-limit";
-import { homePathFor } from "@/lib/home";
+import { entryPathFor, homePathFor } from "@/lib/home";
+import { isNativeAppUserAgent } from "@/lib/app-platform-core";
 
 /**
  * Two separate sign-in portals share this one implementation, but they never accept each other's accounts:
@@ -88,7 +89,9 @@ export async function signIn(req: Request, portal: SignInPortal): Promise<NextRe
     await clearRateLimit(idKey);
     const token = await createSession(user.id);
     await setSessionCookie(token);
-    return NextResponse.json({ ok: true, role: user.role, home: homePathFor(user.role) });
+    // Employees on the web are sent to the "Get the app" page; the mobile app goes straight to their home.
+    const native = isNativeAppUserAgent(req.headers.get("user-agent"));
+    return NextResponse.json({ ok: true, role: user.role, home: entryPathFor({ role: user.role, locked: false, native }) });
   } catch (e) {
     console.error(`${portal} sign-in error`, e);
     return NextResponse.json({ error: "Login failed. Please try again." }, { status: 500 });
