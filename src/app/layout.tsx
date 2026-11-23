@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import "./globals.css";
 import PwaRegister from "@/components/PwaRegister";
 import NativeSplash from "@/components/NativeSplash";
+import NativeBootstrap from "@/components/NativeBootstrap";
 import RouteProgress from "@/components/RouteProgress";
 import { isNativeAppRequest } from "@/lib/app-platform";
 
@@ -38,6 +39,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
       </head>
       <body className="bg-slate-100 font-sans text-slate-900 antialiased">
         <PwaRegister />
+        <NativeBootstrap native={native} />
         <NativeSplash native={native}>
           <RouteProgress />
           {children}

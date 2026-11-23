@@ -3,7 +3,6 @@
 
     <!-- Base application theme. -->
     <style name="AppTheme" parent="Theme.AppCompat.Light.DarkActionBar">
-        <!-- Customize your theme here. -->
         <item name="colorPrimary">@color/colorPrimary</item>
         <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
         <item name="colorAccent">@color/colorAccent</item>
@@ -15,8 +14,12 @@
         <item name="android:background">@null</item>
     </style>
 
-
+    <!-- Launch theme: the Dotinout indigo is shown from the first frame, so there is never a black screen. -->
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
-        <item name="android:background">@drawable/splash</item>
+        <item name="android:windowBackground">@color/dioSplash</item>
+        <item name="android:background">@color/dioSplash</item>
+        <item name="windowSplashScreenBackground">@color/dioSplash</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
+        <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
     </style>
 </resources>

@@ -31,8 +31,13 @@ export default function NativeSplash({ native, children }: { native: boolean; ch
       {step < 4 && (
         <div
           aria-hidden="true"
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-indigo-700"
-          style={{ opacity: step === 3 ? 0 : 1, transition: "opacity 480ms ease" }}
+          className="fixed inset-0 z-[100] flex items-center justify-center"
+          style={{
+            backgroundColor: "#4f46e5", // identical to the native splash colour, so there is no flicker
+            opacity: step === 3 ? 0 : 1,
+            transition: "opacity 480ms ease",
+            willChange: "opacity",
+          }}
         >
           <div className="flex text-5xl font-black tracking-tight text-white sm:text-6xl">
             {LETTERS.map((letter, i) => {

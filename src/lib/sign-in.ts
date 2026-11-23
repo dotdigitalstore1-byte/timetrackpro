@@ -5,7 +5,7 @@ import { users } from "@/db/schema";
 import { authenticateEnvSuperAdmin, createSession, setSessionCookie, verifyPassword } from "@/lib/auth";
 import { clearRateLimit, clientIp, isRateLimited } from "@/lib/rate-limit";
 import { entryPathFor, homePathFor } from "@/lib/home";
-import { isNativeAppUserAgent } from "@/lib/app-platform-core";
+import { isNativeRequestHeaders } from "@/lib/app-platform-core";
 
 /**
  * Two separate sign-in portals share this one implementation, but they never accept each other's accounts:
@@ -23,7 +23,7 @@ const MOBILE_EMPLOYEES_ONLY =
   "The Dotinout mobile app is for employees only. Company admins, managers, specialists and platform owners sign in on the Dotinout website.";
 
 export async function signIn(req: Request, portal: SignInPortal): Promise<NextResponse> {
-  const native = isNativeAppUserAgent(req.headers.get("user-agent"));
+  const native = isNativeRequestHeaders(req.headers.get("user-agent"), req.headers.get("cookie"));
   let body: Record<string, unknown>;
   try {
     body = await req.json();

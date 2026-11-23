@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isNativeAppUserAgent } from "../src/lib/app-platform-core.ts";
+import { isNativeAppUserAgent, isNativeRequestHeaders, readCookie } from "../src/lib/app-platform-core.ts";
 import { validateStoreUrl, validateAppFile, safeDownloadName, MAX_APP_FILE_BYTES, validateRegistrationUrl, DEFAULT_REGISTRATION_URL } from "../src/lib/app-links-core.ts";
 
 const ZIP = new Uint8Array([0x50, 0x4b, 0x03, 0x04]);
@@ -47,4 +47,13 @@ test("registration link: any https website, empty restores the default", () => {
   assert.equal(validateRegistrationUrl("https://dotinout.com").ok, true);
   assert.equal(validateRegistrationUrl("http://dotinout.com").ok, false);
   assert.equal(validateRegistrationUrl("dotinout.com").ok, false);
+});
+
+test("the app is recognised by its user-agent or by the remembered cookie", () => {
+  assert.equal(isNativeRequestHeaders("Mozilla/5.0 DotinoutNative/1", null), true);
+  assert.equal(isNativeRequestHeaders("Mozilla/5.0 (Linux) Chrome/120", "theme=dark; dio_native=1"), true);
+  assert.equal(isNativeRequestHeaders("Mozilla/5.0 (Windows) Chrome/120", "theme=dark"), false);
+  assert.equal(isNativeRequestHeaders(null, "dio_native=0"), false);
+  assert.equal(readCookie("a=1; dio_native=1; b=2", "dio_native"), "1");
+  assert.equal(readCookie(null, "dio_native"), undefined);
 });

@@ -38,6 +38,10 @@ export async function PUT(req: Request) {
 
   const registration = validateRegistrationUrl(body.businessRegistrationUrl);
   if (!registration.ok) return NextResponse.json({ error: registration.error }, { status: 400 });
+  // The link must go to the company website, never to a page of this app (that would open inside the mobile app).
+  if (new URL(registration.value).host.toLowerCase() === new URL(req.url).host.toLowerCase()) {
+    return NextResponse.json({ error: "Use your company website here, not a page of this app." }, { status: 400 });
+  }
 
   const now = new Date();
   await db

@@ -30,6 +30,19 @@ const config: CapacitorConfig = {
         }
       : {}),
   },
+  plugins: {
+    SplashScreen: {
+      // The splash stays until the app's first screen has painted (NativeBootstrap hides it). It never auto-hides early.
+      launchAutoHide: false,
+      launchShowDuration: 0,
+      backgroundColor: '#4F46E5',
+      showSpinner: false,
+      androidSplashResourceName: 'splash',
+      androidScaleType: 'CENTER_CROP',
+      splashFullScreen: true,
+      splashImmersive: true,
+    },
+  },
   android: {
     // Keep the Android WebView from being debugged in production builds.
     webContentsDebuggingEnabled: false,

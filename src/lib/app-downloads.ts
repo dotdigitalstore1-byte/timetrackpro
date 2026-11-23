@@ -53,3 +53,22 @@ export async function loadAppLinks(): Promise<{
     files,
   };
 }
+
+/**
+ * The "Register your business" link for the mobile login screen. It is never a page of this app: if the saved link
+ * points at the app's own host, the default website is used instead.
+ */
+export async function loadRegistrationUrl(appHost: string | null): Promise<string> {
+  const [row] = await db
+    .select({ url: platformSettings.businessRegistrationUrl })
+    .from(platformSettings)
+    .where(eq(platformSettings.id, 1))
+    .limit(1);
+  const url = row?.url || DEFAULT_REGISTRATION_URL;
+  try {
+    if (appHost && new URL(url).host.toLowerCase() === appHost.toLowerCase()) return DEFAULT_REGISTRATION_URL;
+  } catch {
+    return DEFAULT_REGISTRATION_URL;
+  }
+  return url;
+}
