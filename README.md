@@ -321,10 +321,13 @@ attendance rows to an archive table instead of deleting them. The job never dele
 * **Mock location.** A web page cannot reliably detect mock-location apps. The server refuses any punch where
   `mockLocation: true` is sent, and records the attempt in the audit log (`punch.blocked`). Punches with an accuracy under
   1 m are accepted but logged (`punch.flagged`) for review.
-* **Making mock-location detection real (Android):** build the Capacitor shell (see *Turning this into a mobile app* above)
-  and define `window.TimeTrackNative.isMockLocation()` in it. It should return `true` when the Android location object
-  reports `isFromMockProvider()`. The web app already sends that flag. Without a native shell, mock GPS can only be
-  reduced by these checks, not fully prevented.
+* **Mock location and Developer Options (Android app):** the Android shell implements these checks in
+  `android/app/src/main/java/com/dotinout/app/DeviceSecurity.java`, exposed to the web app as `window.TimeTrackNative`.
+  Attendance is locked (on launch, when the app returns to the foreground, and before each punch) while Developer
+  Options is on, a mock-location app is allowed, or the last GPS fix came from a mock provider. The web app sends both
+  flags with every punch and the server refuses any punch that reports either. iOS does not expose Developer Options to
+  apps, so the iOS build does not run this check yet. The checks are in `src/lib/device-security.ts` (unit tests in
+  `tests/device-security.test.ts`).
 
 ### Peak-hour performance (morning punch-in)
 * Authentication is one database query per request (it was three round trips).

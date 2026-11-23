@@ -41,6 +41,21 @@ interface Props {
   onCancel: () => void;
 }
 
+/**
+ * Sets the zoom to the standard 1x lens (or the nearest zoom the camera allows). Browsers that do not expose zoom
+ * are left alone. Failures are ignored: the camera still works, just at its default zoom.
+ */
+async function useStandardLens(track: MediaStreamTrack) {
+  try {
+    const caps = track.getCapabilities?.() as { zoom?: { min: number; max: number } } | undefined;
+    if (!caps?.zoom) return;
+    const target = Math.min(Math.max(1, caps.zoom.min), caps.zoom.max);
+    await track.applyConstraints({ advanced: [{ zoom: target }] } as unknown as MediaTrackConstraints);
+  } catch {
+    // Zoom control is not available on this device or browser.
+  }
+}
+
 /** Encodes the current video frame at the given size and quality as a JPEG data URL. */
 function encodeFrame(video: HTMLVideoElement, side: number, quality: number): string | null {
   const scale = Math.min(1, side / Math.max(video.videoWidth, video.videoHeight));
@@ -151,7 +166,10 @@ export default function CameraCapture({ title, onCapture, onCancel }: Props) {
           return;
         }
         streamRef.current = stream;
-        const settings = stream.getVideoTracks()[0]?.getSettings();
+        const track = stream.getVideoTracks()[0];
+        // Phones often open the back camera on a telephoto or wide lens. Ask for the standard 1x lens when supported.
+        if (track && facing === "environment") await useStandardLens(track);
+        const settings = track?.getSettings();
         // Mirror only the front camera, like a mirror; webcams that do not say which side they are count as front.
         setMirror(settings?.facingMode ? settings.facingMode === "user" : facing === "user");
         const video = videoRef.current;
@@ -255,7 +273,7 @@ export default function CameraCapture({ title, onCapture, onCancel }: Props) {
           ref={videoRef}
           playsInline
           muted
-          className={`h-full w-full object-cover ${mirror ? "scale-x-[-1]" : ""} ${reviewing ? "hidden" : ""}`}
+          className={`h-full w-full ${facing === "user" ? "object-cover" : "bg-black object-contain"} ${mirror ? "scale-x-[-1]" : ""} ${reviewing ? "hidden" : ""}`}
         />
         {reviewing && shot && (
           // eslint-disable-next-line @next/next/no-img-element

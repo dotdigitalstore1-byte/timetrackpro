@@ -32,7 +32,9 @@ env:
 jobs:
   simulator-app:
     name: Simulator app (.app)
-    runs-on: macos-latest
+    # Set the repository variable IOS_RUNNER (for example macos-14) to move to another macOS runner pool without
+    # editing this file. Stalled queues are a GitHub runner-capacity issue, so re-running the job is the usual fix.
+    runs-on: ${{ vars.IOS_RUNNER || 'macos-latest' }}
     timeout-minutes: 60
     env:
       CAPACITOR_SERVER_URL: ${{ vars.CAPACITOR_SERVER_URL }}
@@ -105,7 +107,9 @@ jobs:
   signed-ipa:
     name: Signed archive (.ipa)
     if: github.event_name == 'workflow_dispatch' && inputs.build_signed_ipa
-    runs-on: macos-latest
+    # Set the repository variable IOS_RUNNER (for example macos-14) to move to another macOS runner pool without
+    # editing this file. Stalled queues are a GitHub runner-capacity issue, so re-running the job is the usual fix.
+    runs-on: ${{ vars.IOS_RUNNER || 'macos-latest' }}
     timeout-minutes: 90
     env:
       CAPACITOR_SERVER_URL: ${{ vars.CAPACITOR_SERVER_URL }}

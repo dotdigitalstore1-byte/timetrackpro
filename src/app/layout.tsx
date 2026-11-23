@@ -4,6 +4,7 @@ import "./globals.css";
 import PwaRegister from "@/components/PwaRegister";
 import NativeSplash from "@/components/NativeSplash";
 import NativeBootstrap from "@/components/NativeBootstrap";
+import DeviceSecurityGate from "@/components/DeviceSecurityGate";
 import RouteProgress from "@/components/RouteProgress";
 import { isNativeAppRequest } from "@/lib/app-platform";
 
@@ -44,6 +45,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
           <RouteProgress />
           {children}
         </NativeSplash>
+        <DeviceSecurityGate />
       </body>
     </html>
   );

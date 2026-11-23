@@ -44,12 +44,15 @@ const config: CapacitorConfig = {
     },
   },
   android: {
+    // Brand colour behind the WebView until the first page paints, so the launch never shows a black frame.
+    backgroundColor: '#4F46E5',
     // Keep the Android WebView from being debugged in production builds.
     webContentsDebuggingEnabled: false,
     // The server uses this token to allow employee attendance and leave only inside the mobile app.
     appendUserAgent: 'DotinoutNative/1',
   },
   ios: {
+    backgroundColor: '#4F46E5',
     contentInset: 'automatic',
     scrollEnabled: true,
     appendUserAgent: 'DotinoutNative/1',

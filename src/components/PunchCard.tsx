@@ -6,6 +6,7 @@ import { Badge, Button, Card } from "@/components/ui";
 import CameraCapture from "@/components/CameraCapture";
 import { formatTime, toDateKey, workingHours } from "@/lib/utils";
 import { AGREEMENTS_CHANGED } from "@/lib/notifications";
+import { blockedMessage, readDeviceSecurity } from "@/lib/device-security";
 
 interface AttendanceRow {
   id: string;
@@ -52,10 +53,27 @@ export default function PunchCard({ onChanged }: { onChanged?: () => void }) {
 
   // Called only with a photo from the live camera (see CameraCapture): there is no gallery path.
   // Each attempt takes a fresh GPS fix and a fresh server challenge, so a retry never reuses stale values.
+  // Opening the camera is the first step of a punch, so the Developer Options / mock-location check runs here too.
+  const openCamera = (type: "in" | "out") => {
+    const security = readDeviceSecurity();
+    if (security.blocked) {
+      setError(blockedMessage(security));
+      return;
+    }
+    setError("");
+    setCamera(type);
+  };
+
   const doPunch = async (type: "in" | "out", photo: string) => {
     setCamera(null);
     setError("");
     setSuccess("");
+    // Checked again just before the punch is sent: the employee may have changed the setting while the camera was open.
+    const security = readDeviceSecurity();
+    if (security.blocked) {
+      setError(blockedMessage(security));
+      return;
+    }
     setPunching(true);
     try {
       const result = await withRetry(async () => {
@@ -72,7 +90,8 @@ export default function PunchCard({ onChanged }: { onChanged?: () => void }) {
             lng: pos.lng,
             accuracy: pos.accuracy,
             fixAgeMs: pos.fixAgeMs,
-            mockLocation: nativeReportsMockLocation(),
+            mockLocation: security.mockLocation,
+            developerOptions: security.developerOptions,
             challenge,
           }),
         });
@@ -139,7 +158,7 @@ export default function PunchCard({ onChanged }: { onChanged?: () => void }) {
           size="lg"
           disabled={!!todayRecord?.punchInTime || punching}
           loading={punching}
-          onClick={() => setCamera("in")}
+          onClick={() => openCamera("in")}
           className="w-full"
         >
           {todayRecord?.punchInTime ? "✓ Punched In" : "📸 Punch In"}
@@ -149,13 +168,13 @@ export default function PunchCard({ onChanged }: { onChanged?: () => void }) {
           size="lg"
           disabled={!todayRecord?.punchInTime || !!todayRecord?.punchOutTime || punching}
           loading={punching}
-          onClick={() => setCamera("out")}
+          onClick={() => openCamera("out")}
           className="w-full"
         >
           {todayRecord?.punchOutTime ? "✓ Punched Out" : "📸 Punch Out"}
         </Button>
       </div>
-      <p className="mt-2 text-center text-[11px] text-slate-400">Live camera photo + GPS are required. Gallery photos and mock-location (fake GPS) apps are blocked.</p>
+      <p className="mt-2 text-center text-[11px] text-slate-400">Live camera photo + GPS are required. Gallery photos, mock-location (fake GPS) apps and Developer Options are blocked.</p>
 
       {camera && (
         <CameraCapture
@@ -170,18 +189,4 @@ export default function PunchCard({ onChanged }: { onChanged?: () => void }) {
       {loading && <p className="mt-3 text-center text-xs text-slate-400">Loading…</p>}
     </Card>
   );
-}
-
-/**
- * True when the native app (Capacitor shell) reports that the OS is using a mock-location provider.
- * The web app cannot read this itself; see README "Mock location" for the native implementation.
- */
-function nativeReportsMockLocation(): boolean {
-  if (typeof window === "undefined") return false;
-  const bridge = (window as unknown as { TimeTrackNative?: { isMockLocation?: () => boolean } }).TimeTrackNative;
-  try {
-    return bridge?.isMockLocation?.() === true;
-  } catch {
-    return false;
-  }
 }

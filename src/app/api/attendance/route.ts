@@ -255,6 +255,7 @@ export async function POST(req: Request) {
     accuracy?: unknown;
     fixAgeMs?: unknown;
     mockLocation?: unknown;
+    developerOptions?: unknown;
     challenge?: { ts?: unknown; sig?: unknown };
   };
   try {
@@ -274,6 +275,14 @@ export async function POST(req: Request) {
     await logSecurityEvent(companyId, employeeId, ctx.user.id, "punch.blocked", { type, reason: "mock_location" });
     return NextResponse.json(
       { error: "Fake GPS / mock location was detected. Turn off mock-location apps and punch again from your work location." },
+      { status: 403 }
+    );
+  }
+  // The native app reports Developer Options too. It is blocked the same way, so an employee cannot punch with it on.
+  if (body.developerOptions === true) {
+    await logSecurityEvent(companyId, employeeId, ctx.user.id, "punch.blocked", { type, reason: "developer_options" });
+    return NextResponse.json(
+      { error: "Developer Options is turned on. Turn it off in Android Settings, then punch again." },
       { status: 403 }
     );
   }
