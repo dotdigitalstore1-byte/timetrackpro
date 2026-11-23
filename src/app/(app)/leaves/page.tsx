@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { api, hasPower, isNetworkError, useMe } from "@/lib/client";
-import { cacheRead, cacheWrite } from "@/lib/offline/store";
+import { useCachedResource } from "@/lib/offline/resource";
+import { resourceKeys, resourceUrls } from "@/lib/offline/tabs";
 import { enqueueOfflineAction, newIdempotencyKey } from "@/lib/offline/outbox";
 import { Badge, Button, Card, EmptyState, Input, PageHeader, Select, Spinner } from "@/components/ui";
 import { formatDate } from "@/lib/utils";
@@ -24,53 +25,39 @@ interface LeaveRow {
   rejectionReason: string | null;
 }
 
+interface LeaveBalance {
+  year: number; quota: number; used: number; pending: number; remaining: number;
+  mode: "carry" | "lapse"; accrued: number; thisMonth: number;
+}
+
+interface LeavesPayload {
+  leaves: LeaveRow[];
+  balance: LeaveBalance | null;
+}
+
 export default function LeavesPage() {
-  const { me } = useMe();
+  const { me, loading: meLoading } = useMe();
   const isManager = me?.user.role === "manager";
   const canApprove = hasPower(me, "approve_leaves");
 
-  const [leaves, setLeaves] = useState<LeaveRow[]>([]);
-  const [balance, setBalance] = useState<{
-    year: number; quota: number; used: number; pending: number; remaining: number;
-    mode: "carry" | "lapse"; accrued: number; thisMonth: number;
-  } | null>(null);
-  const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState("");
   const [error, setError] = useState("");
-  const [loadError, setLoadError] = useState("");
   const [success, setSuccess] = useState("");
+
+  // The last saved copy shows at once (no spinner on a tab switch); the server refresh follows in the background.
+  const leavesRes = useCachedResource<LeavesPayload>(me ? resourceKeys.leaves(me.user.id) : null, () =>
+    api<LeavesPayload>(resourceUrls.leaves())
+  );
+  const leaves = leavesRes.data?.leaves ?? [];
+  const balance = leavesRes.data?.balance ?? null;
+  const loading = meLoading || leavesRes.loading;
+  const loadError = leavesRes.error;
+  const load = leavesRes.reload;
 
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [reason, setReason] = useState("");
   const [leaveType, setLeaveType] = useState("casual");
-
-  const load = useCallback(async () => {
-    setLoadError("");
-    try {
-      const data = await api<{ leaves: LeaveRow[]; balance: typeof balance }>("/api/leaves");
-      cacheWrite("leaves", data);
-      setLeaves(data.leaves);
-      setBalance(data.balance);
-    } catch (e) {
-      // Offline: show the last copy saved on this device instead of an empty screen.
-      const cached = isNetworkError(e) ? cacheRead<{ leaves: LeaveRow[]; balance: typeof balance }>("leaves") : null;
-      if (cached) {
-        setLeaves(cached.value.leaves);
-        setBalance(cached.value.balance);
-        setLoadError("");
-      } else {
-        setLeaves([]);
-        setLoadError(e instanceof Error ? e.message : "Could not load leave requests");
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
 
   const requestLeave = async () => {
     setError("");

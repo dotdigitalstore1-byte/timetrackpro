@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { api, useMe } from "@/lib/client";
+import { useCachedResource } from "@/lib/offline/resource";
+import { resourceKeys, resourceUrls } from "@/lib/offline/tabs";
 import { Badge, Button, Card, EmptyState, ErrorBanner, Skeleton, Spinner } from "@/components/ui";
 import PunchCard from "@/components/PunchCard";
 import { HiddenDetails } from "@/components/HiddenDetails";
@@ -202,55 +204,47 @@ export default function DashboardPage() {
   );
 }
 
+type NoticeState = { status: string; phase: string | null; daysLeft: number | null; lastWorkingDay: string | null; noticeDays: number | null };
+
+interface DashboardPayload {
+  att: {
+    records: AttendanceRow[];
+    days: CalendarDayRow[] | null;
+    summary: CycleCounts;
+    period?: { start: string; end: string };
+    today?: string;
+  };
+  lv: { leaves: LeaveRow[]; balance: LeaveBalance | null };
+  sal: SalaryData;
+  notice: NoticeState | null;
+}
+
 function EmployeeDashboard() {
   const { me } = useMe();
-  const [records, setRecords] = useState<AttendanceRow[]>([]);
-  const [days, setDays] = useState<CalendarDayRow[]>([]);
-  const [summary, setSummary] = useState<CycleCounts>(EMPTY_CYCLE_COUNTS);
-  const [today, setToday] = useState<string>("");
-  const [cyclePeriod, setCyclePeriod] = useState<{ start: string; end: string } | null>(null);
-  const [leaves, setLeaves] = useState<LeaveRow[]>([]);
-  const [salary, setSalary] = useState<SalaryData | null>(null);
-  const [balance, setBalance] = useState<LeaveBalance | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  // The last saved copy shows at once, so Home never opens on a spinner once it has been loaded on this device.
+  const dash = useCachedResource<DashboardPayload>(me ? resourceKeys.dashboard(me.user.id) : null, () =>
+    Promise.all([
+      api<DashboardPayload["att"]>(resourceUrls.attendance("", "")),
+      api<DashboardPayload["lv"]>(resourceUrls.leaves()),
+      api<SalaryData>(resourceUrls.salary("", "")),
+      // The notice banner is optional: a failure here must not break the dashboard.
+      api<{ current: NoticeState | null }>("/api/notice").then((n) => n.current ?? null).catch(() => null),
+    ]).then(([att, lv, sal, notice]) => ({ att, lv, sal, notice }))
+  );
+  const att = dash.data?.att;
+  const records = att?.records ?? [];
+  const days = att?.days ?? [];
+  const summary = att?.summary ?? EMPTY_CYCLE_COUNTS;
+  const today = att?.today ?? "";
+  const cyclePeriod = att?.period ?? null;
+  const leaves = dash.data?.lv.leaves ?? [];
+  const balance = dash.data?.lv.balance ?? null;
+  const salary = dash.data?.sal ?? null;
+  const notice = dash.data?.notice ?? null;
+  const loading = dash.loading;
+  const error = dash.error;
+  const load = dash.reload;
   const [clock, setClock] = useState(() => new Date());
-  const [notice, setNotice] = useState<{ status: string; phase: string | null; daysLeft: number | null; lastWorkingDay: string | null; noticeDays: number | null } | null>(null);
-
-  const load = useCallback(async () => {
-    setError("");
-    // The notice banner is optional: a failure here must not break the dashboard.
-    api<{ current: typeof notice }>("/api/notice").then((n) => setNotice(n.current ?? null)).catch(() => setNotice(null));
-    try {
-      const [att, lv, sal] = await Promise.all([
-        api<{
-          records: AttendanceRow[];
-          days: CalendarDayRow[] | null;
-          summary: CycleCounts;
-          period?: { start: string; end: string };
-          today?: string;
-        }>(`/api/attendance`),
-        api<{ leaves: LeaveRow[]; balance: LeaveBalance | null }>("/api/leaves"),
-        api<SalaryData>(`/api/salary`),
-      ]);
-      setRecords(att.records);
-      setDays(att.days ?? []);
-      setSummary(att.summary ?? EMPTY_CYCLE_COUNTS);
-      setToday(att.today ?? "");
-      setCyclePeriod(att.period ?? null);
-      setLeaves(lv.leaves);
-      setBalance(lv.balance);
-      setSalary(sal);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load your dashboard");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   // The clock drives the shift progress bar; it updates once a minute.
   useEffect(() => {

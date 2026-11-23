@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import { useCachedResource } from "@/lib/offline/resource";
+import { resourceKeys, resourceUrls } from "@/lib/offline/tabs";
 import Link from "next/link";
 import { api, hasPower, useMe } from "@/lib/client";
 import { Badge, Button, Card, EmptyState, Input, Modal, PageHeader, Select, Spinner } from "@/components/ui";
@@ -112,6 +114,15 @@ const LIST_VIEWS: { key: ListView; label: string }[] = [
   { key: "issues", label: "Late, half day & absent" },
 ];
 
+interface AttendancePayload {
+  records: AttendanceRow[];
+  days: CalendarDayRow[] | null;
+  summary: CycleCounts;
+  period?: { start: string; end: string };
+  today?: string;
+  month?: string;
+}
+
 export default function AttendancePage() {
   const { me, loading: meLoading } = useMe();
   const isAdmin = me?.user.role === "company_admin";
@@ -122,56 +133,34 @@ export default function AttendancePage() {
 
   // Empty = the current salary cycle (the server decides which cycle that is).
   const [month, setMonth] = useState("");
-  const [period, setPeriod] = useState<{ start: string; end: string } | null>(null);
-  const [cycleKey, setCycleKey] = useState(""); // the cycle the server is showing, as YYYY-MM
   const [currentKey, setCurrentKey] = useState(""); // the cycle that contains today
-  const [today, setToday] = useState("");
   const [employeeId, setEmployeeId] = useState("");
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
-  const [records, setRecords] = useState<AttendanceRow[]>([]);
-  const [days, setDays] = useState<CalendarDayRow[] | null>(null);
-  const [summary, setSummary] = useState<CycleCounts>(EMPTY_CYCLE_COUNTS);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+
+  // The last saved copy for this cycle and employee shows at once; the server refresh follows in the background.
+  const effectiveEmployee = canViewAll ? employeeId : "";
+  const attRes = useCachedResource<AttendancePayload>(
+    me ? resourceKeys.attendance(me.user.id, month, effectiveEmployee) : null,
+    () => api<AttendancePayload>(resourceUrls.attendance(month, effectiveEmployee))
+  );
+  const payload = attRes.data;
+  const records = payload?.records ?? [];
+  const days = payload?.days ?? null;
+  const summary = payload?.summary ?? EMPTY_CYCLE_COUNTS;
+  const period = payload?.period ?? null;
+  const today = payload?.today ?? "";
+  const cycleKey = payload?.month ?? month; // the cycle the server is showing, as YYYY-MM
+  const loading = meLoading || attRes.loading;
+  const error = attRes.error;
+  const load = attRes.reload;
+
+  useEffect(() => {
+    if (!month && payload?.month) setCurrentKey(payload.month);
+  }, [month, payload?.month]);
   const [editing, setEditing] = useState<AttendanceRow | null>(null);
   // Oldest first reads like a calendar: the start of the cycle at the top, the end at the bottom.
   const [newestFirst, setNewestFirst] = useState(false);
   const [view, setView] = useState<ListView>("all");
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const qs = new URLSearchParams();
-      if (month) qs.set("month", month);
-      if (canViewAll && employeeId) qs.set("employeeId", employeeId);
-      const data = await api<{
-        records: AttendanceRow[];
-        days: CalendarDayRow[] | null;
-        summary: CycleCounts;
-        period?: { start: string; end: string };
-        today?: string;
-        month?: string;
-      }>(`/api/attendance?${qs}`);
-      setRecords(data.records);
-      setDays(data.days ?? null);
-      setSummary(data.summary ?? EMPTY_CYCLE_COUNTS);
-      setPeriod(data.period ?? null);
-      setToday(data.today ?? "");
-      setCycleKey(data.month ?? month);
-      if (!month && data.month) setCurrentKey(data.month);
-    } catch (e) {
-      setRecords([]);
-      setDays(null);
-      setError(e instanceof Error ? e.message : "Could not load attendance");
-    } finally {
-      setLoading(false);
-    }
-  }, [month, employeeId, canViewAll]);
-
-  useEffect(() => {
-    if (!meLoading) void load();
-  }, [load, meLoading]);
 
   useEffect(() => {
     if (canViewAll && employees.length === 0) {

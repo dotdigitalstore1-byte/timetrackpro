@@ -7,6 +7,7 @@ import NativeBootstrap from "@/components/NativeBootstrap";
 import DeviceSecurityGate from "@/components/DeviceSecurityGate";
 import RouteProgress from "@/components/RouteProgress";
 import { isNativeAppRequest } from "@/lib/app-platform";
+import { HIDE_NATIVE_SPLASH_SCRIPT } from "@/lib/native-splash";
 
 export const metadata: Metadata = {
   title: "Dotinout (DIO) — Attendance & Salary Management",
@@ -40,6 +41,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
       </head>
       <body className="bg-slate-100 font-sans text-slate-900 antialiased">
         <PwaRegister />
+        {native && <script dangerouslySetInnerHTML={{ __html: HIDE_NATIVE_SPLASH_SCRIPT }} />}
         <NativeBootstrap native={native} />
         <NativeSplash native={native}>
           <RouteProgress />

@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCachedResource } from "@/lib/offline/resource";
+import { resourceKeys, resourceUrls } from "@/lib/offline/tabs";
 import { api, downloadBlob, hasPower, useMe } from "@/lib/client";
 import { Badge, Button, Card, Input, PageHeader, Select, Spinner } from "@/components/ui";
 import EmployeePicker from "@/components/EmployeePicker";
@@ -80,44 +82,26 @@ export default function SalaryPage() {
   const [customTo, setCustomTo] = useState("");
   const [employeeId, setEmployeeId] = useState("");
   const [employees, setEmployees] = useState<{ id: string; fullName: string; employeeCode?: string | null }[]>([]);
-  const [data, setData] = useState<SalaryData | null>(null);
-  const [loading, setLoading] = useState(true);
+
+  // Admins open a payslip only for a chosen employee; the overview covers everyone else.
+  // The last saved copy shows at once; the server refresh follows in the background.
+  const skipLoad = isAdmin && !employeeId;
+  const effectiveEmployee = canPick ? employeeId : "";
+  const salRes = useCachedResource<SalaryData>(
+    me && !skipLoad ? resourceKeys.salary(me.user.id, month, effectiveEmployee) : null,
+    () => api<SalaryData>(resourceUrls.salary(month, effectiveEmployee))
+  );
+  const data = salRes.data;
+  const loading = salRes.loading;
+  const loadError = salRes.error;
+  const load = salRes.reload;
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
-  const [loadError, setLoadError] = useState("");
   const [dLabel, setDLabel] = useState("");
   const [dAmount, setDAmount] = useState("");
   const [aLabel, setALabel] = useState("");
   const [aAmount, setAAmount] = useState("");
-
-  const load = useCallback(async () => {
-    // Admins open a payslip only for a chosen employee; the overview covers everyone else.
-    if (isAdmin && !employeeId) {
-      setData(null);
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setLoadError("");
-    try {
-      const qs = new URLSearchParams();
-      if (month) qs.set("month", month);
-      if (canPick && employeeId) qs.set("employeeId", employeeId);
-      const d = await api<SalaryData>(`/api/salary?${qs}`);
-      setData(d);
-      if (!month) setMonth(`${d.year}-${String(d.month).padStart(2, "0")}`);
-    } catch (e) {
-      setData(null);
-      setLoadError(e instanceof Error ? e.message : "Could not load salary data");
-    } finally {
-      setLoading(false);
-    }
-  }, [month, employeeId, canPick]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
 
   // Deductions change as the day goes on (late marks, half days, unpunched days, excuses). Keep the page current.
   useEffect(() => {

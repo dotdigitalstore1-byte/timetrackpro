@@ -5,6 +5,7 @@ import { useMe } from "@/lib/client";
 import { useIsOnline } from "@/lib/offline/network";
 import { flushOutbox } from "@/lib/offline/outbox";
 import { failedList, failedWrite, OFFLINE_CHANGED_EVENT, outboxList } from "@/lib/offline/store";
+import { prefetchEmployeeTabs } from "@/lib/offline/tabs";
 
 const subscribeOffline = (cb: () => void) => {
   window.addEventListener(OFFLINE_CHANGED_EVENT, cb);
@@ -56,6 +57,15 @@ export default function OfflineSync() {
       window.clearInterval(timer);
     };
   }, [sync]);
+
+  // Warm the employee tabs once the device is online, so switching tabs shows data at once.
+  const userId = me?.user.id;
+  const role = me?.user.role;
+  useEffect(() => {
+    if (!userId || role !== "employee" || !online) return;
+    const timer = window.setTimeout(() => prefetchEmployeeTabs(userId), 1200);
+    return () => window.clearTimeout(timer);
+  }, [userId, role, online]);
 
   if (online && pending === 0 && failed === 0) return null;
 

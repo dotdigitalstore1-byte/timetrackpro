@@ -14,6 +14,7 @@ import AgreementGate from "@/components/AgreementGate";
 import AdminFeedbackGate from "@/components/AdminFeedbackGate";
 import OfflineSync from "@/components/OfflineSync";
 import { clearOfflineCache } from "@/lib/offline/store";
+import { clearResourceMemory } from "@/lib/offline/resource";
 
 interface NavItem {
   href: string;
@@ -172,6 +173,7 @@ export default function AppShell({
     clearMe();
     // Drop this device's cached data so the next person to sign in on a shared phone never sees it.
     clearOfflineCache();
+    clearResourceMemory();
     router.push("/login");
     router.refresh();
   };
