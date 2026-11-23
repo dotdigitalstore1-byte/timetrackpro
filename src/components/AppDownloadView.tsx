@@ -151,6 +151,10 @@ export default function AppDownloadView({ employeeName, playStoreUrl, appStoreUr
         >
           {signingOut ? "Signing out…" : "Sign out"}
         </button>
+
+        <a href="/privacy" className="mt-6 text-xs text-indigo-200 underline-offset-4 hover:text-white hover:underline">
+          Privacy Policy
+        </a>
       </div>
     </div>
   );

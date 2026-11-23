@@ -56,6 +56,31 @@ async function useStandardLens(track: MediaStreamTrack) {
   }
 }
 
+/**
+ * Android WebViews can open a telephoto or ultra-wide back lens by default, which looks zoomed in. Labels such as
+ * "camera2 0, facing back" are only readable after permission, so this runs once the camera is open. It returns the
+ * id of the main back camera when the current one is a different lens, or null when no change is needed.
+ * Only used on Android: iOS labels its virtual cameras differently and its main lens is already the default.
+ */
+const NON_MAIN_LENS = /ultra|wide|tele|macro|depth|periscope/i;
+async function findMainBackCameraId(currentDeviceId: string | undefined): Promise<string | null> {
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const videos = devices.filter((d) => d.kind === "videoinput" && d.deviceId);
+    const backs = videos.filter((d) => /back|rear|environment/i.test(d.label) && !/front|user/i.test(d.label));
+    if (backs.length === 0) return null;
+    const main = backs.find((d) => !NON_MAIN_LENS.test(d.label)) ?? backs[0];
+    const current = videos.find((d) => d.deviceId === currentDeviceId);
+    // Already on the main lens (or unknown): leave the stream alone.
+    if (!current || current.deviceId === main.deviceId || !NON_MAIN_LENS.test(current.label)) return null;
+    return main.deviceId;
+  } catch {
+    return null;
+  }
+}
+
+const IS_ANDROID = typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
+
 /** Encodes the current video frame at the given size and quality as a JPEG data URL. */
 function encodeFrame(video: HTMLVideoElement, side: number, quality: number): string | null {
   const scale = Math.min(1, side / Math.max(video.videoWidth, video.videoHeight));
@@ -164,6 +189,21 @@ export default function CameraCapture({ title, onCapture, onCancel }: Props) {
         if (cancelled) {
           stream.getTracks().forEach((t) => t.stop());
           return;
+        }
+        if (facing === "environment" && IS_ANDROID) {
+          const currentId = stream.getVideoTracks()[0]?.getSettings().deviceId;
+          const mainId = await findMainBackCameraId(currentId);
+          if (mainId && !cancelled) {
+            stream.getTracks().forEach((t) => t.stop());
+            stream = await open({
+              video: { deviceId: { exact: mainId }, width: { ideal: 1280 }, height: { ideal: 720 } },
+              audio: false,
+            });
+            if (cancelled) {
+              stream.getTracks().forEach((t) => t.stop());
+              return;
+            }
+          }
         }
         streamRef.current = stream;
         const track = stream.getVideoTracks()[0];

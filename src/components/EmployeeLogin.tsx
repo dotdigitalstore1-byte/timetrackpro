@@ -102,6 +102,13 @@ export default function EmployeeLogin({ registrationUrl }: { registrationUrl: st
         >
           New company? Register your business
         </a>
+
+        <a
+          href="/privacy"
+          className="mt-2 self-center rounded-full px-4 py-2 text-xs text-indigo-200 underline-offset-4 hover:text-white hover:underline"
+        >
+          Privacy Policy
+        </a>
       </div>
     </div>
   );

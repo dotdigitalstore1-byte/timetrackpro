@@ -88,6 +88,12 @@ export default function WorkspaceLogin() {
           </p>
         </Card>
 
+        <p className="mt-3 text-center text-xs">
+          <Link href="/privacy" className="text-indigo-200 underline-offset-4 hover:text-white hover:underline">
+            Privacy Policy
+          </Link>
+        </p>
+
         <p className="mt-4 text-center text-xs text-indigo-200">
           Employees sign in with their Email ID or username, and the password given by their company administrator.
         </p>
