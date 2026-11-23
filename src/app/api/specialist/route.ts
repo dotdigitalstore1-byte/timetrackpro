@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuth } from "@/lib/auth";
+import { requireRoles } from "@/lib/rbac";
 import { OnboardingError, specialistQueue } from "@/lib/onboarding";
 import { db } from "@/db";
 import { onboardingSpecialists } from "@/db/schema";
@@ -9,7 +10,8 @@ import { eq } from "drizzle-orm";
 export async function GET() {
   const ctx = await getAuth();
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (ctx.user.role !== "onboarding_specialist") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const denied = requireRoles(ctx, ["onboarding_specialist"]);
+  if (denied) return denied;
   try {
     const [profile] = await db.select().from(onboardingSpecialists).where(eq(onboardingSpecialists.userId, ctx.user.id)).limit(1);
     const queue = await specialistQueue(ctx.user.id);

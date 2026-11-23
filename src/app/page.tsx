@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { getAuthAllowLocked } from "@/lib/auth";
 import { loadPricing, serializeCycle, serializePlan } from "@/lib/billing";
 import { TRIAL_DAYS } from "@/lib/billing-core";
+import { entryPathFor } from "@/lib/home";
 import PlanPicker from "@/components/PlanPicker";
 import { BrandMark } from "@/components/Brand";
 
@@ -84,7 +85,7 @@ function Logo() {
 
 export default async function LandingPage() {
   const [ctx, pricing] = await Promise.all([getAuthAllowLocked(), loadPricing()]);
-  const dashboardHref = ctx?.locked ? "/billing" : ctx?.user.role === "onboarding_specialist" ? "/specialist" : "/dashboard";
+  const dashboardHref = ctx ? entryPathFor({ role: ctx.user.role, locked: ctx.locked }) : "/dashboard";
 
   return (
     <div className="min-h-dvh bg-white text-slate-900">

@@ -1,6 +1,12 @@
-// Network-first for pages (so new deployments are never hidden behind a stale cache),
-// cache-first only for immutable static assets. API calls and authenticated HTML are never cached.
-const CACHE = "dotinout-v4";
+// Dotinout service worker.
+// - Static, immutable assets (JS/CSS chunks, icons): cache-first.
+// - Pages: network-first. The last good copy is kept in a separate page cache so the app shell opens offline.
+//   That cache is cleared on sign-out (see clearOfflineCache), because pages contain per-user data.
+// - API responses are never cached here. Offline data is cached explicitly by the app (src/lib/offline) and
+//   offline writes are queued with idempotency keys.
+const CACHE = "dotinout-v5";
+const PAGES = "dotinout-pages-v1";
+const KEEP = [CACHE, PAGES];
 const STATIC = ["/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png"];
 
 self.addEventListener("install", (event) => {
@@ -11,7 +17,7 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => !KEEP.includes(k)).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
@@ -20,6 +26,9 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("message", (event) => {
   if (event.data === "SKIP_WAITING") self.skipWaiting();
 });
+
+const OFFLINE_PAGE =
+  "<!doctype html><meta name=viewport content='width=device-width,viewport-fit=cover'><body style='font-family:sans-serif;padding:2rem;text-align:center'><h2>You are offline</h2><p>Open a page you have visited before, or reconnect to see the latest data.</p>";
 
 self.addEventListener("fetch", (event) => {
   const req = event.request;
@@ -46,16 +55,25 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Pages: always try the network; fall back to a tiny offline notice.
   if (req.mode === "navigate") {
     event.respondWith(
-      fetch(req).catch(
-        () =>
-          new Response(
-            "<!doctype html><meta name=viewport content='width=device-width'><body style='font-family:sans-serif;padding:2rem;text-align:center'><h2>You are offline</h2><p>Dotinout needs a connection to punch in and show salary data. Please reconnect and try again.</p>",
-            { headers: { "Content-Type": "text/html; charset=utf-8" }, status: 503 }
-          )
-      )
+      fetch(req)
+        .then((res) => {
+          // Only keep a plain successful page (not a redirect), so an offline visit never lands on a login loop.
+          if (res.ok && !res.redirected) {
+            const copy = res.clone();
+            caches.open(PAGES).then((c) => c.put(req, copy));
+          }
+          return res;
+        })
+        .catch(async () => {
+          const saved = await caches.match(req, { cacheName: PAGES });
+          if (saved) return saved;
+          return new Response(OFFLINE_PAGE, {
+            headers: { "Content-Type": "text/html; charset=utf-8" },
+            status: 503,
+          });
+        })
     );
   }
 });

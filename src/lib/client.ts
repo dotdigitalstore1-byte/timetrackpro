@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useSyncExternalStore } from "react";
+import { cacheRead, cacheWrite } from "@/lib/offline/store";
 
 export interface PermissionInfo {
   key: string;
@@ -71,6 +72,11 @@ export interface MeData {
 export function hasPower(me: MeData | null | undefined, permission: string): boolean {
   if (!me) return false;
   return me.access.isAdmin || (me.access.isManager && me.access.permissions.includes(permission));
+}
+
+/** True when the request never reached the server (no connection, DNS failure, timeout). */
+export function isNetworkError(e: unknown): boolean {
+  return e instanceof ApiError && e.status === 0;
 }
 
 export class ApiError extends Error {
@@ -159,13 +165,20 @@ function loadMe(force = false): Promise<void> {
   mePromise = (async () => {
     try {
       const data = await api<MeData>("/api/auth/me");
+      cacheWrite("me", data);
       setMe({ data, error: null, loading: false });
     } catch (e) {
-      setMe({
-        data: null,
-        error: e instanceof Error ? e.message : "Failed to load session",
-        loading: false,
-      });
+      // No connection: fall back to the last session saved on this device so the app still opens offline.
+      const cached = isNetworkError(e) ? cacheRead<MeData>("me") : null;
+      if (cached) {
+        setMe({ data: cached.value, error: null, loading: false });
+      } else {
+        setMe({
+          data: null,
+          error: e instanceof Error ? e.message : "Failed to load session",
+          loading: false,
+        });
+      }
     } finally {
       mePromise = null;
     }

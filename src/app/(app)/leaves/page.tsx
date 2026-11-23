@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { api, hasPower, useMe } from "@/lib/client";
+import { api, hasPower, isNetworkError, useMe } from "@/lib/client";
+import { cacheRead, cacheWrite } from "@/lib/offline/store";
+import { enqueueOfflineAction, newIdempotencyKey } from "@/lib/offline/outbox";
 import { Badge, Button, Card, EmptyState, Input, PageHeader, Select, Spinner } from "@/components/ui";
 import { formatDate } from "@/lib/utils";
 
@@ -47,11 +49,20 @@ export default function LeavesPage() {
     setLoadError("");
     try {
       const data = await api<{ leaves: LeaveRow[]; balance: typeof balance }>("/api/leaves");
+      cacheWrite("leaves", data);
       setLeaves(data.leaves);
       setBalance(data.balance);
     } catch (e) {
-      setLeaves([]);
-      setLoadError(e instanceof Error ? e.message : "Could not load leave requests");
+      // Offline: show the last copy saved on this device instead of an empty screen.
+      const cached = isNetworkError(e) ? cacheRead<{ leaves: LeaveRow[]; balance: typeof balance }>("leaves") : null;
+      if (cached) {
+        setLeaves(cached.value.leaves);
+        setBalance(cached.value.balance);
+        setLoadError("");
+      } else {
+        setLeaves([]);
+        setLoadError(e instanceof Error ? e.message : "Could not load leave requests");
+      }
     } finally {
       setLoading(false);
     }
@@ -64,10 +75,13 @@ export default function LeavesPage() {
   const requestLeave = async () => {
     setError("");
     setSuccess("");
+    const body = JSON.stringify({ startDate, endDate, reason, leaveType });
+    const idempotencyKey = newIdempotencyKey();
     try {
       await api("/api/leaves", {
         method: "POST",
-        body: JSON.stringify({ startDate, endDate, reason, leaveType }),
+        headers: { "Idempotency-Key": idempotencyKey },
+        body,
       });
       setSuccess("Leave request submitted.");
       setStartDate("");
@@ -76,6 +90,23 @@ export default function LeavesPage() {
       setLeaveType("casual");
       await load();
     } catch (e) {
+      // No connection: keep the request on this device and send it automatically when the phone is back online.
+      if (isNetworkError(e) && me) {
+        enqueueOfflineAction({
+          id: idempotencyKey,
+          userId: me.user.id,
+          url: "/api/leaves",
+          method: "POST",
+          body,
+          label: `Leave ${startDate} to ${endDate}`,
+        });
+        setSuccess("You're offline. Your leave request is saved on this device and will be sent when you reconnect.");
+        setStartDate("");
+        setEndDate("");
+        setReason("");
+        setLeaveType("casual");
+        return;
+      }
       setError(e instanceof Error ? e.message : "Request failed");
     }
   };

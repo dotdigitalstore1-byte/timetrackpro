@@ -3,6 +3,7 @@ import { and, desc, eq, gte, inArray, lt, lte } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLogs, employees, leaveRequests, users } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
+import { findStoredResponse, readIdempotencyKey, storeResponse } from "@/lib/idempotency";
 import { restrictedResponse } from "@/lib/restriction";
 import { loadAccess, visibleEmployeeIds } from "@/lib/access";
 import { holidayKeys, weeklyOffOf } from "@/lib/company";
@@ -105,6 +106,17 @@ export async function POST(req: Request) {
   const companyId = ctx.company!.id;
   const tz = ctx.settings.timezone;
 
+  // Offline-queued requests carry an Idempotency-Key. A retry of a request that already succeeded returns the
+  // original result, so a flaky connection can never create the same leave twice.
+  const idem = readIdempotencyKey(req);
+  if (!idem.valid) return NextResponse.json({ error: "Invalid Idempotency-Key header." }, { status: 400 });
+  if (idem.key) {
+    const stored = await findStoredResponse(ctx.user.id, idem.key);
+    if (stored) {
+      return NextResponse.json(stored.body, { status: stored.status, headers: { "Idempotent-Replayed": "true" } });
+    }
+  }
+
   let body: Record<string, unknown>;
   try {
     body = await req.json();
@@ -163,5 +175,7 @@ export async function POST(req: Request) {
     .returning();
 
   await db.insert(auditLogs).values({ companyId, actorId: ctx.user.id, action: "leave.request", entity: "leave", entityId: rec.id, details: { startDate: sd, endDate: ed, days, leaveType } });
-  return NextResponse.json({ ok: true, id: rec.id, days });
+  const payload = { ok: true, id: rec.id, days };
+  if (idem.key) await storeResponse(ctx.user.id, idem.key, 200, payload);
+  return NextResponse.json(payload);
 }

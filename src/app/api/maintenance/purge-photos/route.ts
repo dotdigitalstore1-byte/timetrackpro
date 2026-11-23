@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
+import { lt } from "drizzle-orm";
+import { db } from "@/db";
+import { idempotencyKeys } from "@/db/schema";
 import { purgeExpiredPhotos, purgeOldAttendance } from "@/lib/photos";
 
 // Scheduled job (e.g. a daily cron in Coolify): POST /api/maintenance/purge-photos
@@ -22,6 +25,8 @@ async function run(req: Request) {
   if (!authorised(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const photosRemoved = await purgeExpiredPhotos();
   const recordsRemoved = await purgeOldAttendance();
+  // Offline-replay records only need to outlive a device's retry window.
+  await db.delete(idempotencyKeys).where(lt(idempotencyKeys.createdAt, new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)));
   return NextResponse.json({ ok: true, attendanceRowsCleared: photosRemoved, attendanceRowsDeleted: recordsRemoved });
 }
 

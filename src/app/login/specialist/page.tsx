@@ -20,13 +20,14 @@ export default function SpecialistLoginPage() {
     setError("");
     setLoading(true);
     try {
-      await api<{ role: string }>("/api/auth/login", {
+      // Dedicated endpoint: it only accepts Expert Specialist accounts and never returns an attendance home.
+      const res = await api<{ role: string; home: string }>("/api/auth/specialist/login", {
         method: "POST",
-        body: JSON.stringify({ identifier, password, portal: "specialist" }),
+        body: JSON.stringify({ identifier, password }),
       });
       clearMe();
       // Straight into the specialist queue, never the attendance screen.
-      router.replace("/specialist");
+      router.replace(res.home || "/specialist");
       router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Login failed");

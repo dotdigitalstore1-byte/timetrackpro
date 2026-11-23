@@ -12,6 +12,8 @@ import { canOpenSpecialistArea, homePathFor } from "@/lib/home";
 import NotificationBell from "@/components/NotificationBell";
 import AgreementGate from "@/components/AgreementGate";
 import AdminFeedbackGate from "@/components/AdminFeedbackGate";
+import OfflineSync from "@/components/OfflineSync";
+import { clearOfflineCache } from "@/lib/offline/store";
 
 interface NavItem {
   href: string;
@@ -167,6 +169,8 @@ export default function AppShell({
       // ignore
     }
     clearMe();
+    // Drop this device's cached data so the next person to sign in on a shared phone never sees it.
+    clearOfflineCache();
     router.push("/login");
     router.refresh();
   };
@@ -175,6 +179,7 @@ export default function AppShell({
 
   return (
     <div className="min-h-dvh bg-slate-100">
+      <OfflineSync />
       {/* Desktop sidebar */}
       <aside className="fixed inset-y-0 left-0 hidden w-60 flex-col border-r border-slate-200 bg-white lg:flex">
         <div className="flex items-center gap-2.5 border-b border-slate-100 px-5 py-5">
@@ -229,7 +234,7 @@ export default function AppShell({
       </aside>
 
       {/* Mobile top bar */}
-      <header className="sticky top-0 z-30 flex items-center justify-between border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur lg:hidden">
+      <header className="sticky top-0 z-30 flex items-center justify-between border-b border-slate-200 bg-white/90 px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))] backdrop-blur lg:hidden">
         <div className="flex min-w-0 items-center gap-2.5">
           {platformOwned ? (
             <BrandMark className="h-8 w-8 shrink-0 rounded-lg" />

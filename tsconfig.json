@@ -16,8 +16,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "jsx": "react-jsx",
-    "incremental": true,
-    "baseUrl": ".",
+    "incremental": false,
     "paths": {
       "@/*": [
         "./src/*"
@@ -38,6 +37,10 @@
     ".next/dev/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    ".next",
+    "android",
+    "ios",
+    "mobile-www"
   ]
 }

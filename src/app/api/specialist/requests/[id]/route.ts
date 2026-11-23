@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuth } from "@/lib/auth";
+import { requireRoles } from "@/lib/rbac";
 import { claimRequest, completeRequest, flagRequest, OnboardingError, releaseRequest } from "@/lib/onboarding";
 
 const UUID = /^[0-9a-f-]{36}$/i;
@@ -8,7 +9,8 @@ const UUID = /^[0-9a-f-]{36}$/i;
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await getAuth();
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (ctx.user.role !== "onboarding_specialist") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const denied = requireRoles(ctx, ["onboarding_specialist"]);
+  if (denied) return denied;
   const { id } = await params;
   if (!UUID.test(id)) return NextResponse.json({ error: "Unknown request." }, { status: 400 });
   const body = await req.json().catch(() => ({}));

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/client";
 import { Badge, Button, Card } from "@/components/ui";
-import { downloadPayslipPdf, type SlipPayload } from "@/lib/payslip-pdf";
+import type { SlipPayload } from "@/lib/payslip-pdf";
 import { formatDate, formatDayKey, monthLabel } from "@/lib/utils";
 
 interface HistoryItem {
@@ -92,6 +92,8 @@ export function EmployeeSlipsCard({ history }: { history: HistoryItem[] }) {
     setErr("");
     try {
       const slip = await api<SlipPayload>(`/api/salary/slips/${r.id}`);
+      // Loaded on demand so the PDF library stays out of the startup bundle (matters on mobile networks).
+      const { downloadPayslipPdf } = await import("@/lib/payslip-pdf");
       await downloadPayslipPdf(slip);
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "Could not download the slip");

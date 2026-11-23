@@ -892,3 +892,23 @@ export const onboardingEvents = pgTable(
   },
   (t) => [index("onboarding_events_request_idx").on(t.requestId)]
 );
+
+/**
+ * Replay protection for offline-queued writes. The client sends an Idempotency-Key header; the first successful
+ * response is stored here, and any retry with the same key returns that stored response instead of creating a duplicate.
+ */
+export const idempotencyKeys = pgTable(
+  "idempotency_keys",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    key: varchar("key", { length: 80 }).notNull(),
+    status: integer("status").notNull(),
+    response: jsonb("response").$type<Record<string, unknown>>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("idempotency_user_key_uq").on(t.userId, t.key)]
+);
+

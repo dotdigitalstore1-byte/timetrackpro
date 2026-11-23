@@ -1,6 +1,6 @@
 /**
  * The one place that decides where each role starts. Used by login, the PWA entry point, the dashboard guard,
- * and the app shell, so no role can be sent to another role's screens.
+ * the landing page and the app shell, so no role can be sent to another role's screens.
  */
 export function homePathFor(role: string): string {
   switch (role) {
@@ -14,7 +14,22 @@ export function homePathFor(role: string): string {
   }
 }
 
-/** Pages a role may open. Anything else is sent back to that role's home page. */
+/**
+ * Where a signed-in session should land. Only company admins are sent to billing when their company is locked;
+ * staff are handled by the app layout (neutral "unavailable" page at the hard cutoff). Sending a locked employee to
+ * billing was a routing bug: billing is an admin-only screen.
+ */
+export function entryPathFor(session: { role: string; locked: boolean }): string {
+  if (session.role === "company_admin" && session.locked) return "/billing";
+  return homePathFor(session.role);
+}
+
+/** Pages a specialist may open. Anything else is sent back to the specialist queue. */
 export function canOpenSpecialistArea(pathname: string): boolean {
-  return pathname === "/specialist" || pathname.startsWith("/specialist/") || pathname === "/profile" || pathname.startsWith("/profile/");
+  return (
+    pathname === "/specialist" ||
+    pathname.startsWith("/specialist/") ||
+    pathname === "/profile" ||
+    pathname.startsWith("/profile/")
+  );
 }
