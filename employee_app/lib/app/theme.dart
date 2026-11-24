@@ -4,7 +4,7 @@ import '../core/theme/brand.dart';
 
 /// The app theme. Cards, buttons, fields, the header and the bottom bar use the web app's styles.
 ThemeData buildDotTheme() {
-  final scheme = ColorScheme.light(
+  const scheme = ColorScheme.light(
     primary: DotColors.indigo600,
     onPrimary: Colors.white,
     secondary: DotColors.violet600,
