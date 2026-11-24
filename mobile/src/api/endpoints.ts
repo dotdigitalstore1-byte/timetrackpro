@@ -71,3 +71,22 @@ export const requestSalarySlip = (month: string) =>
   apiRequest<{ ok: boolean; status: string }>('/api/salary/slips', { method: 'POST', body: { action: 'request', month } });
 
 export const salarySlip = (id: string) => apiRequest<SlipDetail>(`/api/salary/slips/${encodeURIComponent(id)}`);
+
+/** Signed, session-bound challenge that the next punch must include. Fetched right before each punch. */
+export const punchChallenge = () => apiRequest<{ ts: number; sig: string }>('/api/attendance/challenge');
+
+export interface PunchBody {
+  type: 'in' | 'out';
+  photo: string;
+  lat: number;
+  lng: number;
+  accuracy?: number;
+  fixAgeMs: number;
+  mockLocation: boolean;
+  developerOptions: boolean;
+  challenge: { ts: number; sig: string };
+}
+
+/** The server takes the time itself and ignores any client clock. A repeated punch returns duplicate: true. */
+export const punch = (body: PunchBody) =>
+  apiRequest<{ ok?: boolean; duplicate?: boolean; status?: string }>('/api/attendance', { method: 'POST', body });

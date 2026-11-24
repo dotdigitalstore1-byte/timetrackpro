@@ -4,6 +4,14 @@ Add these in the repository: **Settings → Secrets and variables → Actions**.
 
 ## 1. Required for the workflow
 
+**Without `EXPO_TOKEN` the build stops with "An Expo user account is required".** Add it first:
+1. Sign in at expo.dev, then go to Account settings → Access tokens → Create token.
+2. In GitHub: Settings → Secrets and variables → Actions → New repository secret. Name: `EXPO_TOKEN`. Paste the token.
+3. Re-run the failed workflow.
+
+Finished files: after a build, open the run in the Actions tab and download the file from the **Artifacts** section
+(`dotinout-android-preview-<run>` contains the APK).
+
 | Name | Type | Value |
 |---|---|---|
 | `EXPO_TOKEN` | Secret | An Expo access token. Create it at expo.dev → Account settings → Access tokens. |

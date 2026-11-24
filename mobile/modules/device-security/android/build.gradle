@@ -1,0 +1,14 @@
+apply plugin: 'com.android.library'
+apply plugin: 'expo-module-gradle-plugin'
+
+group = 'expo.modules.devicesecurity'
+version = '1.0.0'
+
+android {
+  namespace "expo.modules.devicesecurity"
+
+  defaultConfig {
+    versionCode 1
+    versionName "1.0.0"
+  }
+}

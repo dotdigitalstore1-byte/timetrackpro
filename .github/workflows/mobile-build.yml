@@ -1,7 +1,9 @@
 name: Mobile app (Expo / EAS)
 
-# Typecheck and tests run on every push that changes the mobile app. Builds run only when started by hand, because
-# each build uses the Expo build quota. Builds run on Expo's servers, so this needs no Android or macOS runner.
+# Typecheck and tests run on every push that changes the mobile app.
+# Android builds run automatically on push to main. iOS builds are manual only (they use EAS quota).
+# Builds run on Expo's servers, so this needs no Android or macOS runner.
+# Finished files appear under the run's "Artifacts" section in the Actions tab.
 
 on:
   push:
@@ -45,7 +47,7 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund || npm install --no-audit --no-fund
 
       - name: Typecheck
         run: npx tsc --noEmit
@@ -54,8 +56,6 @@ jobs:
         run: npm test -- --ci
 
   build:
-    # Runs after the checks pass: automatically for a push to main (Android APK, preview profile),
-    # or by hand from the Actions tab (any platform and profile). iOS is manual only, to save EAS build quota.
     name: Build ${{ inputs.platform || 'android' }} (${{ inputs.profile || 'preview' }})
     needs: check
     if: ${{ success() && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') }}
@@ -64,11 +64,19 @@ jobs:
     env:
       PLATFORM: ${{ inputs.platform || 'android' }}
       PROFILE: ${{ inputs.profile || 'preview' }}
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
     defaults:
       run:
         working-directory: mobile
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check EXPO_TOKEN secret
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "::error title=EXPO_TOKEN missing::Add an Expo access token as the repository secret EXPO_TOKEN (Settings > Secrets and variables > Actions). See .github/SECRETS.md."
+            exit 1
+          fi
 
       - uses: actions/setup-node@v4
         with:
@@ -81,12 +89,40 @@ jobs:
           token: ${{ secrets.EXPO_TOKEN }}
 
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund || npm install --no-audit --no-fund
 
       - name: Android build
         if: env.PLATFORM == 'android' || env.PLATFORM == 'both'
-        run: eas build --platform android --profile "$PROFILE" --non-interactive --wait
+        run: eas build --platform android --profile "$PROFILE" --non-interactive --wait --json > ../android-build.json
+
+      - name: Download Android build
+        if: env.PLATFORM == 'android' || env.PLATFORM == 'both'
+        run: |
+          URL=$(node -e 'const b=require("../android-build.json");const a=Array.isArray(b)?b[0]:b;process.stdout.write(a.artifacts.buildUrl)')
+          CLEAN="${URL%%\?*}"
+          EXT="${CLEAN##*.}"
+          curl -fL "$URL" -o "../dotinout-android-$PROFILE.$EXT"
 
       - name: iOS build
         if: env.PLATFORM == 'ios' || env.PLATFORM == 'both'
-        run: eas build --platform ios --profile "$PROFILE" --non-interactive --wait
+        run: eas build --platform ios --profile "$PROFILE" --non-interactive --wait --json > ../ios-build.json
+
+      - name: Download iOS build
+        if: env.PLATFORM == 'ios' || env.PLATFORM == 'both'
+        run: |
+          URL=$(node -e 'const b=require("../ios-build.json");const a=Array.isArray(b)?b[0]:b;process.stdout.write(a.artifacts.buildUrl)')
+          CLEAN="${URL%%\?*}"
+          EXT="${CLEAN##*.}"
+          curl -fL "$URL" -o "../dotinout-ios-$PROFILE.$EXT"
+
+      - name: Upload builds to the Actions tab
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dotinout-${{ env.PLATFORM }}-${{ env.PROFILE }}-${{ github.run_number }}
+          path: |
+            dotinout-*.apk
+            dotinout-*.aab
+            dotinout-*.ipa
+          if-no-files-found: warn
+          retention-days: 30

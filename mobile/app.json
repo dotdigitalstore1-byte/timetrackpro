@@ -13,7 +13,9 @@
       "bundleIdentifier": "com.dotinout.app",
       "buildNumber": "1000",
       "supportsTablet": false,
-      "config": { "usesNonExemptEncryption": false }
+      "config": {
+        "usesNonExemptEncryption": false
+      }
     },
     "android": {
       "package": "com.dotinout.app",
@@ -33,6 +35,18 @@
           "image": "./assets/splash-mark.png",
           "imageWidth": 200,
           "backgroundColor": "#4F46E5"
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Dotinout uses the camera to take your attendance photo when you punch in or out."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Dotinout uses your location to confirm you are at your work location when you punch."
         }
       ]
     ]

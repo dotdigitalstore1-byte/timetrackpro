@@ -8,6 +8,7 @@ import { useSession } from '../auth/SessionContext';
 import { scopedKey, useResource } from '../data/useResource';
 import { formatDateKey, formatDayMonth, formatTime, instantOf, shiftMonthKey } from '../format';
 import { colors } from '../theme';
+import { PunchPanel } from '../punch/PunchPanel';
 
 /** Attendance for one salary cycle. The counts are the server's own, the same numbers payroll uses. */
 export function AttendanceScreen() {
@@ -19,6 +20,9 @@ export function AttendanceScreen() {
   const view = month ? chosen : current;
   const data = view.data;
   const currentKey = current.data?.month ?? null;
+
+  const todayKey = current.data?.today ?? null;
+  const todayRecord = todayKey ? (current.data?.days ?? []).find((d) => d.date === todayKey)?.record ?? null : null;
 
   const goBack = () => {
     const base = month ?? currentKey;
@@ -38,6 +42,13 @@ export function AttendanceScreen() {
       }}
     >
       <StatusBanner state={view} />
+      <PunchPanel
+        record={todayRecord}
+        onDone={() => {
+          current.refresh();
+          chosen.refresh();
+        }}
+      />
       <View style={styles.nav}>
         <Pressable onPress={goBack} disabled={!(month ?? currentKey)} hitSlop={12} accessibilityLabel="Previous cycle">
           <Ionicons name="chevron-back" size={26} color={month ?? currentKey ? colors.indigo600 : colors.slate300} />
