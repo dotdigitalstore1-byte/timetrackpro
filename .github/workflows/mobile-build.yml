@@ -91,26 +91,31 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund || npm install --no-audit --no-fund
 
+      - name: Validate Expo config
+        run: npx expo config --type public
+
       - name: Android build
         if: env.PLATFORM == 'android' || env.PLATFORM == 'both'
-        run: eas build --platform android --profile "$PROFILE" --non-interactive --wait --json > ../android-build.json
+        run: eas build --platform android --profile "$PROFILE" --non-interactive --wait
 
       - name: Download Android build
         if: env.PLATFORM == 'android' || env.PLATFORM == 'both'
         run: |
-          URL=$(node -e 'const b=require("../android-build.json");const a=Array.isArray(b)?b[0]:b;process.stdout.write(a.artifacts.buildUrl)')
+          eas build:list --platform android --limit 1 --json --non-interactive > ../android-list.json
+          URL=$(node -e 'const b=require("../android-list.json");const a=Array.isArray(b)?b[0]:b;process.stdout.write(a.artifacts.buildUrl)')
           CLEAN="${URL%%\?*}"
           EXT="${CLEAN##*.}"
           curl -fL "$URL" -o "../dotinout-android-$PROFILE.$EXT"
 
       - name: iOS build
         if: env.PLATFORM == 'ios' || env.PLATFORM == 'both'
-        run: eas build --platform ios --profile "$PROFILE" --non-interactive --wait --json > ../ios-build.json
+        run: eas build --platform ios --profile "$PROFILE" --non-interactive --wait
 
       - name: Download iOS build
         if: env.PLATFORM == 'ios' || env.PLATFORM == 'both'
         run: |
-          URL=$(node -e 'const b=require("../ios-build.json");const a=Array.isArray(b)?b[0]:b;process.stdout.write(a.artifacts.buildUrl)')
+          eas build:list --platform ios --limit 1 --json --non-interactive > ../ios-list.json
+          URL=$(node -e 'const b=require("../ios-list.json");const a=Array.isArray(b)?b[0]:b;process.stdout.write(a.artifacts.buildUrl)')
           CLEAN="${URL%%\?*}"
           EXT="${CLEAN##*.}"
           curl -fL "$URL" -o "../dotinout-ios-$PROFILE.$EXT"
