@@ -29,21 +29,3 @@ dev_dependencies:
 flutter:
   uses-material-design: true
 
-flutter_launcher_icons:
-  android: true
-  ios: true
-  image_path: "assets/branding/app_icon.png"
-  remove_alpha_ios: true
-  background_color_ios: "#4F46E5"
-  adaptive_icon_background: "#4F46E5"
-  adaptive_icon_foreground: "assets/branding/app_icon.png"
-
-flutter_native_splash:
-  color: "#4F46E5"
-  image: "assets/branding/splash_mark.png"
-  android: true
-  ios: true
-  web: false
-  android_12:
-    color: "#4F46E5"
-    image: "assets/branding/splash_mark.png"

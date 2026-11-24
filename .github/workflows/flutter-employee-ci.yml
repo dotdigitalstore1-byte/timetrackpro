@@ -56,8 +56,8 @@ jobs:
       - name: Brand app (icons, splash, name)
         working-directory: employee_app
         run: |
-          dart run flutter_launcher_icons
-          dart run flutter_native_splash:create
+          dart run flutter_launcher_icons -f branding/launcher-android.yaml
+          dart run flutter_native_splash:create --path=branding/splash-android.yaml
           sed -i 's/android:label="[^"]*"/android:label="Dotinout"/' android/app/src/main/AndroidManifest.xml
       - name: Build release bundle
         working-directory: employee_app
@@ -94,8 +94,8 @@ jobs:
       - name: Brand app (icons, splash, name)
         working-directory: employee_app
         run: |
-          dart run flutter_launcher_icons
-          dart run flutter_native_splash:create
+          dart run flutter_launcher_icons -f branding/launcher-ios.yaml
+          dart run flutter_native_splash:create --path=branding/splash-ios.yaml
           /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Dotinout" ios/Runner/Info.plist || /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string Dotinout" ios/Runner/Info.plist
       # Signing and TestFlight upload are added in M5, once the certificates and App Store Connect key are in place.
       - name: Build (no code signing)
