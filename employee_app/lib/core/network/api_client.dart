@@ -35,7 +35,7 @@ class ApiClient {
   static Dio _buildDio() {
     return Dio(
       BaseOptions(
-        baseUrl: Env.apiBaseUrl,
+        baseUrl: Env.origin,
         connectTimeout: const Duration(seconds: 15),
         receiveTimeout: const Duration(seconds: 30),
         sendTimeout: const Duration(seconds: 30),

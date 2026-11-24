@@ -172,7 +172,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             ),
                           ),
                           TextButton(
-                            onPressed: () => _open('${Env.apiBaseUrl}/privacy'),
+                            onPressed: () => _open('${Env.origin}/privacy'),
                             style: TextButton.styleFrom(foregroundColor: DotColors.indigo200),
                             child: const Text(
                               'Privacy Policy',

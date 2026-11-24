@@ -59,6 +59,14 @@ jobs:
           dart run flutter_launcher_icons -f branding/launcher-android.yaml
           dart run flutter_native_splash:create --path=branding/splash-android.yaml
           sed -i 's/android:label="[^"]*"/android:label="Dotinout"/' android/app/src/main/AndroidManifest.xml
+          python3 - << 'PY'
+          import re
+          p = 'android/app/src/main/AndroidManifest.xml'
+          s = open(p).read()
+          if 'android.permission.INTERNET' not in s:
+              s = re.sub(r'(<manifest[^>]*>)', r'\1\n    <uses-permission android:name="android.permission.INTERNET" />', s, count=1)
+              open(p, 'w').write(s)
+          PY
       - name: Build release bundle
         working-directory: employee_app
         run: flutter build appbundle --release --dart-define=API_BASE_URL=$API_BASE_URL
