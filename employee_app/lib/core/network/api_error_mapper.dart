@@ -26,6 +26,7 @@ ApiException mapDioError(DioException e, {void Function()? onUnauthorized}) {
     case DioExceptionType.receiveTimeout:
       return const ApiException(kOfflineMessage, offline: true);
     case DioExceptionType.cancel:
+    case DioExceptionType.transformTimeout:
     case DioExceptionType.badCertificate:
     case DioExceptionType.unknown:
     case DioExceptionType.badResponse:

@@ -1,5 +1,5 @@
-/// Forgiving readers for the server's JSON. Numbers can arrive as numbers or as strings (decimal columns), and any
-/// field can be missing, so every read falls back to a safe value instead of throwing.
+// Forgiving readers for the server's JSON. Numbers can arrive as numbers or as strings (decimal columns), and any
+// field can be missing, so every read falls back to a safe value instead of throwing.
 
 Map<String, dynamic> readMap(Object? v) => v is Map ? Map<String, dynamic>.from(v) : <String, dynamic>{};
 
