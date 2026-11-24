@@ -37,5 +37,7 @@ ApiException mapDioError(DioException e, {void Function()? onUnauthorized}) {
   if (data is Map && data['error'] is String) {
     return ApiException(data['error'] as String, statusCode: status);
   }
-  return ApiException(kGenericMessage, statusCode: status);
+  // Include the HTTP status, so a support message says whether the server or the route failed.
+  final message = status == null ? kGenericMessage : 'Something went wrong (error $status). Please try again.';
+  return ApiException(message, statusCode: status);
 }

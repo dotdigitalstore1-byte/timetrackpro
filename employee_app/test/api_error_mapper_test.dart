@@ -68,7 +68,7 @@ void main() {
 
   test('a server error without a readable message gets the generic message', () {
     final e = mapDioError(_error(status: 500, data: '<html>oops</html>'));
-    expect(e.message, kGenericMessage);
+    expect(e.message, 'Something went wrong (error 500). Please try again.');
     expect(e.statusCode, 500);
   });
 
