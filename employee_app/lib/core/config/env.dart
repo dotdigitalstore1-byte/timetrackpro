@@ -3,7 +3,7 @@ class Env {
   Env._();
 
   /// Base URL of the Dotinout web server, for example https://your-domain.example
-  static const String apiBaseUrl = String.fromEnvironment('https://timetrackpro-xi.vercel.app/', defaultValue: '');
+  static const String apiBaseUrl = String.fromEnvironment('API_BASE_URL', defaultValue: 'https://timetrackpro-ai.vercel.app');
 
   static bool get isConfigured => apiBaseUrl.isNotEmpty;
 }

@@ -8,6 +8,7 @@ import '../data/models/attendance_model.dart';
 import '../data/models/leave_model.dart';
 import '../data/models/me_model.dart';
 import '../data/models/notice_model.dart';
+import 'dot_app_bar.dart';
 import 'widgets.dart';
 
 class HomeScreen extends ConsumerWidget {
@@ -34,8 +35,7 @@ class HomeScreen extends ConsumerWidget {
     final currentNotice = notice.data?.current;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Home'),
+      appBar: DotAppBar(
         actions: [
           IconButton(
             tooltip: 'Notifications',

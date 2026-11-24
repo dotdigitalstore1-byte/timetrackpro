@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/format/formatters.dart';
 import '../application/employee_providers.dart';
 import '../data/models/salary_model.dart';
+import 'dot_app_bar.dart';
 import 'widgets.dart';
 
 /// Salary for one cycle. Every figure comes from the server's calculation. The app shows it and does not recalculate it.
@@ -27,7 +28,7 @@ class _SalaryScreenState extends ConsumerState<SalaryScreen> {
     final selectedKey = _month ?? currentKey;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Salary')),
+      appBar: const DotAppBar(),
       body: ResourceList<SalaryData>(
         snapshot: snap,
         onRefresh: () async {

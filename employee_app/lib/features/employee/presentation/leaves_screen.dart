@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/format/formatters.dart';
 import '../application/employee_providers.dart';
 import '../data/models/leave_model.dart';
+import 'dot_app_bar.dart';
 import 'widgets.dart';
 
 class LeavesScreen extends ConsumerWidget {
@@ -13,7 +14,7 @@ class LeavesScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final snap = snapshotOf(ref.watch(leavesProvider));
     return Scaffold(
-      appBar: AppBar(title: const Text('Leaves')),
+      appBar: const DotAppBar(),
       body: ResourceList<LeavesData>(
         snapshot: snap,
         onRefresh: () async => ref.invalidate(leavesProvider),

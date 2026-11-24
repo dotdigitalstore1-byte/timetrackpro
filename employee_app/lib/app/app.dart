@@ -2,11 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'router.dart';
+import 'theme.dart';
 
 class DotinoutApp extends ConsumerWidget {
   const DotinoutApp({super.key});
-
-  static const _brand = Color(0xFF4F46E5);
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -14,11 +13,7 @@ class DotinoutApp extends ConsumerWidget {
     return MaterialApp.router(
       title: 'Dotinout',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: _brand),
-        useMaterial3: true,
-        inputDecorationTheme: const InputDecorationTheme(border: OutlineInputBorder()),
-      ),
+      theme: buildDotTheme(),
       routerConfig: router,
     );
   }

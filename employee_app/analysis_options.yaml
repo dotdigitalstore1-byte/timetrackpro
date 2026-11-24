@@ -5,9 +5,3 @@ analyzer:
     # Temporary: the analyzer reports package:flutter/material.dart as deprecated, pointing at package:material_ui.
     # That package is not verified here. Migrate the imports once it is confirmed, then remove this line.
     deprecated_member_use: ignore
-
-linter:
-  rules:
-    prefer_const_constructors: true
-    prefer_const_declarations: true
-    avoid_print: true

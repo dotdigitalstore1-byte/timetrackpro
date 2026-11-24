@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../application/employee_providers.dart';
+import 'dot_app_bar.dart';
 import 'widgets.dart';
 
 /// The More tab: the screens that are not in the bottom bar.
@@ -13,7 +14,7 @@ class MoreScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final unread = snapshotOf(ref.watch(notificationsProvider)).data?.unreadCount ?? 0;
     return Scaffold(
-      appBar: AppBar(title: const Text('More')),
+      appBar: const DotAppBar(),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
         children: [

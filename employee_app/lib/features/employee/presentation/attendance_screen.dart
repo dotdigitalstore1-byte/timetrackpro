@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/format/formatters.dart';
 import '../application/employee_providers.dart';
 import '../data/models/attendance_model.dart';
+import 'dot_app_bar.dart';
 import 'widgets.dart';
 
 /// Attendance for one salary cycle at a time. The cycle counts come from the server, the same numbers payroll uses.
@@ -25,7 +26,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     final snap = snapshotOf(ref.watch(attendanceProvider(_month)));
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Attendance')),
+      appBar: const DotAppBar(),
       body: ResourceList<AttendanceData>(
         snapshot: snap,
         onRefresh: () async {

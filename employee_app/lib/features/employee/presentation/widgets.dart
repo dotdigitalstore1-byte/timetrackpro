@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/cache/stale_while_revalidate.dart';
 import '../../../core/format/formatters.dart';
+import '../../../core/theme/brand.dart';
 
 /// The snapshot a screen shows for a provider. Before the first value arrives it is empty, so the screen shows
 /// placeholders rather than a spinner.
@@ -161,6 +162,8 @@ class StatTile extends StatelessWidget {
 
   final String label;
   final String value;
+
+  /// Small colour dot before the label, as the web's stat cards use a tinted badge.
   final Color? color;
 
   @override
@@ -169,14 +172,31 @@ class StatTile extends StatelessWidget {
     return Card(
       margin: EdgeInsets.zero,
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(value, style: text.headlineSmall?.copyWith(color: color, fontWeight: FontWeight.w700)),
-            const SizedBox(height: 2),
-            Text(label, style: text.bodySmall),
+            Text(
+              value,
+              style: text.headlineSmall?.copyWith(fontWeight: FontWeight.w700, color: DotColors.slate900),
+            ),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                if (color != null) ...[
+                  Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+                  const SizedBox(width: 6),
+                ],
+                Flexible(
+                  child: Text(
+                    label,
+                    overflow: TextOverflow.ellipsis,
+                    style: text.bodySmall?.copyWith(color: DotColors.slate500, fontWeight: FontWeight.w500),
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
       ),
