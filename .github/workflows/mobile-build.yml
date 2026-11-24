@@ -56,14 +56,19 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
+      - name: Check preinstalled Android SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls "$ANDROID_HOME" || true
+          ls "$ANDROID_HOME/platforms" || echo "no platforms listed"
+
       - name: Generate native Android project
         run: npx expo prebuild --platform android --clean --no-install
       - name: Build APK with Gradle
         working-directory: mobile/android
-        run: ./gradlew --no-daemon assembleDebug
+        run: chmod +x gradlew && ./gradlew --no-daemon assembleDebug
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
