@@ -3,33 +3,42 @@
 A native Android and iOS app (React Native with Expo). It replaces the earlier Capacitor shell and the Flutter
 project. It calls the same `/api` routes as the website, so there is one backend.
 
-## Run it
+## Run it during development
 
 ```bash
 cd mobile
-npm install
-npx expo install --check     # aligns package versions with Expo SDK 54
+npm ci
+npx expo install --check
 npm run typecheck
 npm test
-npm start                    # then open in Expo Go or a simulator
+npm start
 ```
 
-The app talks to `https://timetrackpro-ai.vercel.app` by default. To point a build elsewhere, set
-`EXPO_PUBLIC_API_BASE_URL` in `eas.json` for that profile.
+`npm start` is the Expo development server. Expo Go is optional for compatible screens, but it is **not** used to create the installable Android APK described below.
 
-## Build for testing
+## Build an Android APK for testing (free, local Gradle)
 
-Builds run on Expo's servers (EAS). Install the EAS CLI once (`npm i -g eas-cli`), then:
+Requirements: Windows/macOS/Linux, Node.js 22, JDK 17, Android Studio and Android SDK.
 
-```bash
-eas login
-eas build --platform android --profile preview      # installable APK
-eas build --platform ios --profile simulator        # simulator build, no Apple account needed
-eas build --platform ios --profile preview          # device build, needs an Apple Developer account
+On Windows, open this folder and run:
+
+```bat
+build-apk.bat
 ```
 
-The GitHub Actions workflow `.github/workflows/mobile-build.yml` does the same from the Actions tab (see
-`.github/SECRETS.md` for the one secret it needs).
+The script runs Expo Prebuild to generate the native `android` project and then runs Gradle `assembleDebug`. The APK is copied to `mobile/dotinout-debug.apk`.
+
+Detailed Windows setup, installation and troubleshooting: [MOBILE-APK-WINDOWS.md](./MOBILE-APK-WINDOWS.md).
+
+## Build an Android APK on GitHub (no EAS / no Expo token)
+
+The workflow `.github/workflows/mobile-build.yml` runs on pushes to `main` that change `mobile/**`, or manually from GitHub Actions. It uses GitHub-hosted Ubuntu, Node 22, Java 17, Android SDK and Gradle. Download the `dotinout-debug-apk` artifact from the completed run.
+
+GitHub Actions has usage limits; free availability depends on the repository visibility and your GitHub plan. No Expo account, `EXPO_TOKEN`, or EAS build is required.
+
+## API address
+
+The app talks to `https://timetrackpro-ai.vercel.app` by default. To point a build elsewhere, set `EXPO_PUBLIC_API_BASE_URL` before Prebuild/building.
 
 ## Layout
 
@@ -44,3 +53,5 @@ The GitHub Actions workflow `.github/workflows/mobile-build.yml` does the same f
 
 - Punching in and out. It needs the camera, location and device checks, and is planned as the next release.
 - Requesting leave, a notice period, or a salary slip from the app.
+
+Creating an APK packages the current app; it does not add features that are not implemented yet.
