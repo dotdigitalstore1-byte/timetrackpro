@@ -2,7 +2,7 @@
   "expo": {
     "name": "Dotinout",
     "slug": "dotinout",
-    "owner": "dotinouts-team"
+    "owner": "dotinouts-team",
     "scheme": "dotinout",
     "version": "1.0.0",
     "orientation": "portrait",
