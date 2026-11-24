@@ -97,7 +97,7 @@ export interface AuthContext {
   employee: Employee | null;
   /** The raw session token. Used to sign short-lived punch challenges (see capture-token.ts). Never sent to clients. */
   sessionToken: string;
-  /** True when the session came from an Authorization bearer token (the Flutter app), not the web cookie. */
+  /** True when the session came from an Authorization bearer token (the native app), not the web cookie. */
   viaBearer: boolean;
   /** The company admin is locked out (trial or paid period ended). Only the billing pages may be used then. */
   locked: boolean;

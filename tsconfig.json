@@ -39,8 +39,6 @@
   "exclude": [
     "node_modules",
     ".next",
-    "android",
-    "ios",
-    "mobile-www"
+    "mobile"
   ]
 }

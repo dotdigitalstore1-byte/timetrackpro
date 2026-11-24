@@ -1,0 +1,87 @@
+name: Mobile app (Expo / EAS)
+
+# Typecheck and tests run on every push that changes the mobile app. Builds run only when started by hand, because
+# each build uses the Expo build quota. Builds run on Expo's servers, so this needs no Android or macOS runner.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "mobile/**"
+      - ".github/workflows/mobile-build.yml"
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "Platform to build"
+        type: choice
+        options: [android, ios, both]
+        default: android
+      profile:
+        description: "Build profile from mobile/eas.json (preview = installable APK / internal iOS, simulator = iOS simulator, production = store build)"
+        type: choice
+        options: [preview, simulator, production]
+        default: preview
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Typecheck and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Tests
+        run: npm test -- --ci
+
+  build:
+    name: Build ${{ inputs.platform }} (${{ inputs.profile }})
+    needs: check
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up Expo and EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Android build
+        if: inputs.platform == 'android' || inputs.platform == 'both'
+        run: eas build --platform android --profile ${{ inputs.profile }} --non-interactive --wait
+
+      - name: iOS build
+        if: inputs.platform == 'ios' || inputs.platform == 'both'
+        run: eas build --platform ios --profile ${{ inputs.profile }} --non-interactive --wait

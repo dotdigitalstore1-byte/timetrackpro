@@ -24,7 +24,7 @@ const MOBILE_EMPLOYEES_ONLY =
 
 /**
  * "cookie": the web sign-in sets the session cookie (unchanged behaviour).
- * "token": the Flutter app's sign-in. Always treated as the mobile app (employees only) and returns the session token
+ * "token": the native app's sign-in. Always treated as the mobile app (employees only) and returns the session token
  * in the body instead of a cookie. The app keeps it in secure device storage and sends it as a Bearer header.
  */
 export type SignInDelivery = "cookie" | "token";

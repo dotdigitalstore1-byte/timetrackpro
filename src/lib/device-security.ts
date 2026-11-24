@@ -40,7 +40,7 @@ const UNVERIFIED: DeviceSecurityStatus = {
   mockLocation: false,
 };
 
-/** True inside the Android Capacitor shell (the shell adds "DotinoutNative/1" to the user agent). */
+/** True inside the Android native shell shell (the shell adds "DotinoutNative/1" to the user agent). */
 export function isAndroidNativeApp(): boolean {
   if (typeof navigator === "undefined") return false;
   const ua = navigator.userAgent || "";

@@ -11,20 +11,9 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
-    "db:backfill": "node scripts/backfill-departments.mjs",
-    "cap:sync": "npx cap sync",
-    "cap:add:android": "npx cap add android",
-    "cap:add:ios": "npx cap add ios",
-    "mobile:android": "npx cap sync android && npx cap open android",
-    "mobile:ios": "npx cap sync ios && npx cap open ios"
+    "db:backfill": "node scripts/backfill-departments.mjs"
   },
   "dependencies": {
-    "@capacitor/android": "^8.6.2",
-    "@capacitor/browser": "^8.0.0",
-    "@capacitor/cli": "^8.6.2",
-    "@capacitor/core": "^8.6.2",
-    "@capacitor/ios": "^8.6.2",
-    "@capacitor/splash-screen": "^8.0.0",
     "dotenv": "17.3.1",
     "drizzle-orm": "0.45.2",
     "exceljs": "^4.4.0",

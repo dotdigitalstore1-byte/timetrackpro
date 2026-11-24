@@ -1,11 +1,10 @@
 "use client";
 
-import { useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, clearMe } from "@/lib/client";
 import { Button, Card, Input } from "@/components/ui";
 import { BrandLockup } from "@/components/Brand";
-import { isNativeAppUserAgent } from "@/lib/app-platform-core";
 
 /** Mobile app sign-in for employees only: username and password. No company or specialist options. */
 export default function EmployeeLogin({ registrationUrl }: { registrationUrl: string }) {
@@ -14,18 +13,6 @@ export default function EmployeeLogin({ registrationUrl }: { registrationUrl: st
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-
-  // In the app, open the website in the device's own browser (Capacitor Browser plugin), never inside the app.
-  const openRegistration = async (e: ReactMouseEvent<HTMLAnchorElement>) => {
-    if (!isNativeAppUserAgent(navigator.userAgent)) return; // normal link on the web
-    e.preventDefault();
-    try {
-      const { Browser } = await import("@capacitor/browser");
-      await Browser.open({ url: registrationUrl });
-    } catch {
-      window.open(registrationUrl, "_blank", "noopener,noreferrer");
-    }
-  };
 
   const submit = async () => {
     if (loading) return;
@@ -97,7 +84,7 @@ export default function EmployeeLogin({ registrationUrl }: { registrationUrl: st
           href={registrationUrl}
           target="_blank"
           rel="noopener noreferrer"
-          onClick={openRegistration}
+         
           className="mt-8 self-center rounded-full px-4 py-2 text-sm text-indigo-100 underline-offset-4 hover:text-white hover:underline"
         >
           New company? Register your business

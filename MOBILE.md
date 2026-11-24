@@ -1,55 +1,45 @@
-# Dotinout mobile apps (Android and iOS)
+# Mobile app
 
-The employee apps are Capacitor shells around the hosted Dotinout web app. The native app loads your
-deployed https URL, so server rendering, cookie sessions and all data access stay on the server.
+The Dotinout employee app is a native Android and iOS app, built with React Native and Expo. It is in `mobile/`.
 
-## One-time setup
+## What it is
 
-1. Deploy the web app and note its public https URL (for example `https://app.dotinout.com`).
-2. Install dependencies (adds `@capacitor/ios`): `npm install`
-3. Set the server URL for the native build (never commit it to a file with secrets):
-   - macOS/Linux: `export CAPACITOR_SERVER_URL=https://app.dotinout.com`
-   - Windows PowerShell: `$env:CAPACITOR_SERVER_URL="https://app.dotinout.com"`
-4. Sync the native projects: `npx cap sync` (or `npm run cap:sync`).
+- It is not a web page in a wrapper. Every screen is native UI that reads the same `/api` JSON routes the website uses.
+- It signs in with the employee's username and password through `POST /api/mobile/auth/login`. The server returns a
+  bearer token, which the app keeps in secure device storage (Keychain / encrypted keystore).
+- Each screen keeps its last data on the phone and shows it at once when opened. The app then refreshes it in the
+  background. If the phone is offline, the saved data stays on screen with a note showing when it was saved.
+- The saved data is scoped per user and cleared on sign-out.
+- Tabs: Home, Attendance, Leaves, Salary, More. More opens Notice period, Notifications and Profile.
 
-The Android project is already in `android/`. For iOS, on a Mac with Xcode: `npx cap add ios`, then
-`npx cap sync ios`.
+## What it does not do yet
 
-## Android (Google Play)
+- Punching in and out. It needs the camera, location and device checks, and is the next release.
+- Requesting leave, a notice period, or a salary slip.
 
-- Open with `npm run mobile:android`, or run `cd android && ./gradlew bundleRelease` for the signed bundle.
-- Before each Play upload, increase `versionCode` and `versionName` in `android/app/build.gradle`.
-- Add a release signing config (keystore kept outside the repository).
-- Permissions declared: internet, network state, camera and location (needed for photo-verified punch-in).
-- Play Console: provide a privacy policy URL and complete the Data safety form (photos, precise location,
-  account data). Explain why camera and location are needed for punch-in.
+## Replaced
 
-## iOS (Apple App Store)
+- The Capacitor shell (`android/`, `ios/`, `mobile-www/`, `capacitor.config.ts`) and its workflows are removed.
+- The Flutter app (`employee_app/`) and its workflow are removed.
 
-- Open with `npm run mobile:ios`, select a team under Signing & Capabilities, then Product > Archive.
-- Add these keys to `ios/App/App/Info.plist` (the app crashes on first camera or location use without them):
-  - `NSCameraUsageDescription`: "Dotinout uses the camera to take a photo when you punch in and out."
-  - `NSLocationWhenInUseUsageDescription`: "Dotinout checks that you are at your work location when you punch in and out."
-- App Review expects a native app to offer more than a website. Keep the native-only pieces (camera punch-in,
-  location checks, offline leave requests, device-level sign-in persistence) prominent in the review notes.
+## Building
 
-## Behaviour on the device
+See `mobile/README.md` for commands and `.github/SECRETS.md` for the GitHub and signing setup.
 
-- Back button (Android): the WebView steps back through in-app pages; on the home screen it leaves the app.
-- Safe areas: the top header and bottom navigation pad for the notch, status bar and home indicator.
-- Sessions: the sign-in cookie lasts up to 400 days, so people stay signed in across app restarts. Signing out
-  revokes the session on the server and clears this device's cached data.
-- Offline: the last viewed pages, profile and leave list are available. Leave requests made offline are saved
-  on the device and sent automatically on reconnect, once each, using an idempotency key. Punch-in is not
-  queued offline, because it must prove the live photo and a fresh GPS fix at the moment it is taken.
+## Before the first store update
 
-## Local development
+- **Keep the same Android keystore** as the current Play Store app. A different key cannot update the listing.
+- **Check the Android version code.** `mobile/app.json` sets `versionCode` to 1000. Google Play rejects an upload whose
+  version code is not higher than the last one it accepted. If the current app's version code is higher than 1000,
+  raise `versionCode` in `app.json`.
+- **Check the iOS build number.** `buildNumber` is 1000 in `app.json`. It must be higher than the last build uploaded
+  to App Store Connect.
+- The bundle ID is still `com.dotinout.app`, so the new build is an update to the existing listing, not a new app.
 
-- Run the web app: `npm run dev`. To test on an Android emulator, set
-  `CAPACITOR_SERVER_URL=http://10.0.2.2:3000` (the emulator's view of your computer). Plain http is only allowed for that value.
+## Testing checklist
 
-## Web vs app access
-
-- Employees who sign in on the web see only the "Get the app" page. Attendance and leave are used in the mobile app.
-- The app identifies itself with the user-agent token `DotinoutNative/1`, set in `capacitor.config.ts`. Do not remove it.
-- The token is a policy gate, not a hard security boundary (see HANDOVER-CHANGES.md, section 7).
+1. Install the APK (Android) or the simulator build (iOS).
+2. Sign in with an employee account. Wrong passwords should show the server's message.
+3. Home, Attendance, Leaves, Salary, Notice, Notifications and Profile should open with data.
+4. Turn off Wi-Fi and mobile data, open the app again: saved data should appear with the offline note.
+5. Sign out, then sign in as a different employee: the first employee's data must not appear.

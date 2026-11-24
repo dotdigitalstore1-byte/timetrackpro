@@ -188,28 +188,16 @@ Apply `migrations/2026-11-admin-feedback-platform-analytics.sql` once (idempoten
   pooler", Neon pooled URL) in `DATABASE_URL`, and keep `DB_POOL_MAX` small. Also set `CRON_SECRET` (see Photo retention above).
 * Never commit `.env` / `.env.local` (they are in `.gitignore`); `.env.example` must only contain placeholders.
 * Still to add for a native app store build: subscription-expiry enforcement/billing, an offline punch queue,
-  device push notifications (the bell is in-app only), and a native wrapper (Capacitor/React Native) that reuses these APIs. The PWA already installs standalone on
+  device push notifications (the bell is in-app only), and a native app that reuses these APIs (the app in `mobile/`). The PWA already installs standalone on
   Android/desktop and includes an offline fallback page.
 
 
-## Turning this into a mobile app (Android / iOS)
+## Mobile app (Android / iOS)
 
-The web app is already an installable PWA. For store builds the simplest path is a Capacitor shell that loads the
-deployed site, so the web app and the mobile app share one codebase and one set of APIs:
-
-```bash
-npm i @capacitor/core @capacitor/cli @capacitor/android @capacitor/ios
-npx cap init "Dotinout" com.yourcompany.timetrack --web-dir=public
-# capacitor.config.ts: server: { url: "https://YOUR-DEPLOYED-SITE", cleartext: false }
-npx cap add android && npx cap add ios
-npx cap sync && npx cap open android      # or: npx cap open ios
-```
-
-* Use `@capacitor/camera` and `@capacitor/geolocation` for punching in the native shell (add the camera/location
-  permission strings the stores require); the current web `capture`/`navigator.geolocation` flow works in the PWA.
-* Authentication is a same-site session cookie, which works when the shell loads your own HTTPS domain. If you later
-  want a fully offline/bundled app, switch the APIs to token auth first.
-* Store review needs a privacy policy that mentions photo + GPS collection.
+The native app is in `mobile/` (React Native with Expo). It replaces the earlier Capacitor shell and the Flutter
+project. It signs in with the same username and password through `POST /api/mobile/auth/login`, keeps a bearer token
+in secure device storage, and calls the same `/api` routes as the website. Setup and build steps are in
+`mobile/README.md` and `MOBILE.md`.
 
 ## Roles, managers and permissions
 
@@ -572,5 +560,5 @@ Run `migrations/2026-12-specialist-workflow-usernames.sql` once (idempotent). It
 - Every role's home page is defined once in `src/lib/home.ts`. The installed app opens `/open`, which sends each signed-in role to its own home (specialists to `/specialist`, staff and admins to `/dashboard`).
 - The specialist area is isolated by role in `AppShell`: specialists cannot open attendance pages, and other roles cannot open `/specialist`.
 - Expert Specialists have a dedicated sign-in at `/login/specialist`, linked from the top-right of `/login`. The login API rejects non-specialist accounts on that page.
-- Brand: the logo and wordmark live in `src/components/Brand.tsx`. App icons are in `public/icons`. The Android bridge name `TimeTrackNative` and the Capacitor app ID `com.yourcompany.timetrack` are intentionally unchanged so existing native builds keep working.
+- Brand: the logo and wordmark live in `src/components/Brand.tsx`. App icons are in `public/icons`. The native app's bundle ID is `com.dotinout.app`, set in `mobile/app.json`.
 

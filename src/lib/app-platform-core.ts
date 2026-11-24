@@ -1,7 +1,7 @@
 // Pure helpers for telling the Dotinout mobile app apart from a browser (no framework imports, so they are testable).
 //
 // Two signals identify the app, and either one is enough:
-//  1. The user-agent token "DotinoutNative/1", which Capacitor appends to the WebView user agent (capacitor.config.ts).
+//  1. The user-agent token "DotinoutNative/1", which the native app sends with every request (it used to be appended by the old native shell shell).
 //  2. A cookie "dio_native=1". Middleware sets it on the first request that carries the token. It is kept on the device,
 //     so a cold start or a background fetch that loses the user-agent still opens the app's own screens.
 //
