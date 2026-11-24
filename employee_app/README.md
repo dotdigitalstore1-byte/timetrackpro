@@ -27,10 +27,23 @@ Use the same production domain as the web app. Release builds must use https.
     flutter analyze
     flutter test
 
+## What is in M2
+
+- Read-only screens: Home, Attendance (per salary cycle), Leaves, Salary (per cycle, with history and holds), Notice,
+  Profile and Notifications. Every figure comes from the server; the app does not recalculate pay or attendance.
+- Offline cache (Drift/SQLite, `lib/core/cache/`). Each screen shows its last saved data at once, then refreshes in the
+  background. Cache keys include the user id, and the cache is cleared on sign-out and on an expired session.
+- When offline, or when a refresh fails, the screen keeps its saved data and shows a banner with the time it was saved.
+- Pull down to refresh on any screen.
+- Full-screen pages (Notice, Notifications, Profile) open above the tabs. The tabs keep their state.
+
+Not in M2: punching in and out (camera, GPS and device checks, M3), the offline queue for leave and profile writes (M3),
+and any create or edit action.
+
 ## What is in M1
 
 - Sign-in against `POST /api/mobile/auth/login` (employees only). The token is kept in secure storage.
 - Session restore on launch (`GET /api/auth/me`). An expired token returns the user to sign-in.
 - Sign-out (`POST /api/auth/logout`), which revokes the session on the server.
-- Bottom navigation with the four tabs (Home, Attendance, Leaves, Salary) and More. Tab screens are placeholders until M2.
+- Bottom navigation with the four tabs (Home, Attendance, Leaves, Salary) and More.
 - Friendly error messages. Network failures never show raw browser or socket errors.

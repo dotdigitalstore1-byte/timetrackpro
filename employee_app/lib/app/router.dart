@@ -5,7 +5,14 @@ import 'package:go_router/go_router.dart';
 import '../features/auth/application/session_controller.dart';
 import '../features/auth/presentation/login_screen.dart';
 import '../features/auth/presentation/splash_screen.dart';
-import '../features/tabs/placeholder_screen.dart';
+import '../features/employee/presentation/attendance_screen.dart';
+import '../features/employee/presentation/home_screen.dart';
+import '../features/employee/presentation/leaves_screen.dart';
+import '../features/employee/presentation/more_screen.dart';
+import '../features/employee/presentation/notice_screen.dart';
+import '../features/employee/presentation/notifications_screen.dart';
+import '../features/employee/presentation/profile_screen.dart';
+import '../features/employee/presentation/salary_screen.dart';
 import 'shell.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
@@ -29,23 +36,28 @@ final routerProvider = Provider<GoRouter>((ref) {
     routes: [
       GoRoute(path: '/splash', builder: (context, state) => const SplashScreen()),
       GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
+      // Full-screen pages opened from More or the Home bell. They sit above the tabs, with a back button.
+      GoRoute(path: '/notice', builder: (context, state) => const NoticeScreen()),
+      GoRoute(path: '/notifications', builder: (context, state) => const NotificationsScreen()),
+      GoRoute(path: '/profile', builder: (context, state) => const ProfileScreen()),
+      // The tabs. Each branch keeps its own state, so switching tabs does not reload or reset scroll position.
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) => ShellScaffold(navigationShell: navigationShell),
         branches: [
           StatefulShellBranch(routes: [
-            GoRoute(path: '/home', builder: (c, s) => const PlaceholderScreen(title: 'Home')),
+            GoRoute(path: '/home', builder: (c, s) => const HomeScreen()),
           ]),
           StatefulShellBranch(routes: [
-            GoRoute(path: '/attendance', builder: (c, s) => const PlaceholderScreen(title: 'Attendance')),
+            GoRoute(path: '/attendance', builder: (c, s) => const AttendanceScreen()),
           ]),
           StatefulShellBranch(routes: [
-            GoRoute(path: '/leaves', builder: (c, s) => const PlaceholderScreen(title: 'Leaves')),
+            GoRoute(path: '/leaves', builder: (c, s) => const LeavesScreen()),
           ]),
           StatefulShellBranch(routes: [
-            GoRoute(path: '/salary', builder: (c, s) => const PlaceholderScreen(title: 'Salary')),
+            GoRoute(path: '/salary', builder: (c, s) => const SalaryScreen()),
           ]),
           StatefulShellBranch(routes: [
-            GoRoute(path: '/more', builder: (c, s) => const PlaceholderScreen(title: 'More')),
+            GoRoute(path: '/more', builder: (c, s) => const MoreScreen()),
           ]),
         ],
       ),

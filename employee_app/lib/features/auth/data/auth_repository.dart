@@ -10,10 +10,11 @@ class SignedInUser {
   final String home;
 }
 
-/// The profile fields the app shows. Only what M1 needs; the full profile arrives with the Profile screen in M2.
+/// The signed-in user's identity. The full employee profile comes from the Profile screen's own call.
 class CurrentUser {
-  const CurrentUser({required this.fullName, required this.role});
+  const CurrentUser({required this.id, required this.fullName, required this.role});
 
+  final String id;
   final String fullName;
   final String role;
 }
@@ -35,6 +36,8 @@ class AuthRepository {
     if (token is! String || token.isEmpty) {
       throw const ApiException('Sign-in failed. Please try again.');
     }
+    // Forget any previous account's token and user id before storing the new one.
+    await _tokens.clear();
     await _tokens.write(token);
     return SignedInUser(
       role: (json['role'] as String?) ?? 'employee',
@@ -42,12 +45,18 @@ class AuthRepository {
     );
   }
 
-  /// Fetches the signed-in user. Throws [ApiException] with `unauthorized` set when the token is no longer valid.
+  /// Fetches the signed-in user and remembers their id for the offline cache.
+  /// Throws [ApiException] with `unauthorized` set when the token is no longer valid.
   Future<CurrentUser> currentUser() async {
     final json = await _api.getJson('/api/auth/me');
     final user = json['user'];
-    if (user is! Map) throw const ApiException('Could not load your profile. Please try again.');
+    if (user is! Map || user['id'] is! String) {
+      throw const ApiException('Could not load your profile. Please try again.');
+    }
+    final id = user['id'] as String;
+    await _tokens.writeUserId(id);
     return CurrentUser(
+      id: id,
       fullName: (user['fullName'] as String?) ?? '',
       role: (user['role'] as String?) ?? 'employee',
     );
@@ -65,6 +74,8 @@ class AuthRepository {
   }
 
   Future<String?> storedToken() => _tokens.read();
+
+  Future<String?> storedUserId() => _tokens.readUserId();
 
   Future<void> clearToken() => _tokens.clear();
 }
