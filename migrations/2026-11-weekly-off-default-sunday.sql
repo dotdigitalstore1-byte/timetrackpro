@@ -3,3 +3,5 @@
 -- have today. An admin removes Saturday (or adds any other day) on the Rules page > Weekly offs & paid holidays.
 
 ALTER TABLE company_settings ALTER COLUMN weekly_off SET DEFAULT '0';
+
+

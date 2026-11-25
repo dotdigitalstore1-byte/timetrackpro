@@ -1,8 +1,8 @@
 {
   "expo": {
     "name": "Dotinout",
-    "slug": "dotinout",
-    "owner": "moonladders-team",
+    "slug": "dot",
+    "owner": "dotinouts-team",
     "scheme": "dotinout",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -26,7 +26,13 @@
         "backgroundColor": "#4F46E5"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ]
     },
     "plugins": [
       "expo-secure-store",
@@ -50,6 +56,11 @@
           "locationWhenInUsePermission": "Dotinout uses your location to confirm you are at your work location when you punch."
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "9c4ac0d8-9257-41aa-852b-7eb7729e4eb4"
+      }
+    }
   }
 }
