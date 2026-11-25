@@ -24,3 +24,6 @@ npm-debug.log*
 /mobile/.expo
 /mobile/dist
 /mobile/web-build
+# Generated native folders (created by expo prebuild / build-apk.bat)
+/mobile/android
+/mobile/ios
