@@ -30,7 +30,7 @@ jobs:
           cache: npm
           cache-dependency-path: mobile/package-lock.json
       - name: Install dependencies
-        run: npm ci --no-audit --no-fund
+        run: npm install --no-audit --no-fund
       - name: TypeScript check
         run: npx tsc --noEmit
       - name: Unit tests
@@ -57,7 +57,7 @@ jobs:
           distribution: temurin
           java-version: '17'
       - name: Install dependencies
-        run: npm ci --no-audit --no-fund
+        run: npm install --no-audit --no-fund
       - name: Check Expo SDK package versions
         run: npx expo install --check
 
