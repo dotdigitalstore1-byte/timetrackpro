@@ -69,6 +69,27 @@ jobs:
 
       - name: Generate native Android project
         run: npx expo prebuild --platform android --clean --no-install
+      - name: Diagnose Expo autolinking (versions and modules)
+        working-directory: mobile
+        run: |
+          echo "=== installed Expo core packages ==="
+          npm ls expo expo-modules-core expo-modules-autolinking 2>/dev/null || true
+          echo "=== autolinking module list (android) ==="
+          npx --no-install expo-modules-autolinking search --json --platform android > ../autolinking.json 2>../autolinking.err || true
+          cat ../autolinking.err || true
+          head -c 20000 ../autolinking.json || true
+
+      - name: Upload autolinking diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: autolinking-diagnostics-${{ github.run_number }}
+          path: |
+            autolinking.json
+            autolinking.err
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Build APK with Gradle
         working-directory: mobile/android
         run: chmod +x gradlew && ./gradlew --no-daemon assembleDebug
